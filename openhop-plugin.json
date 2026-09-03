@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "id": "openhop.nomad",
+  "name": "NOMAD Bridge",
+  "version": "0.1.0",
+  "description": "Bridges an openHop Repeater Companion identity to Project N.O.M.A.D.",
+  "runtime": {
+    "type": "python",
+    "entrypoint": "meshcore-nomad-bridge"
+  },
+  "config": {
+    "defaults": {
+      "meshcore_host": "127.0.0.1",
+      "meshcore_port": 5001,
+      "nomad_url": "http://127.0.0.1:8080",
+      "nomad_model": "qwen2.5:3b-instruct",
+      "nomad_collection": null,
+      "nomad_timeout_seconds": 120,
+      "one_shot": true,
+      "max_concurrent_requests": 2,
+      "busy_wait_seconds": 5,
+      "max_reply_chunks": 4,
+      "max_chunk_bytes": 145,
+      "max_prompt_bytes": 1000,
+      "radio_prompt_enabled": true,
+      "duplicate_ttl_seconds": 600,
+      "log_level": "INFO"
+    }
+  }
+}
