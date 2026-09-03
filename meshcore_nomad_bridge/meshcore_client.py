@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
 import logging
 import struct
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from openhop_core.companion.constants import (
@@ -27,7 +27,6 @@ from openhop_core.companion.constants import (
     RESP_CODE_SENT,
     TXT_TYPE_PLAIN,
 )
-
 
 logger = logging.getLogger(__name__)
 

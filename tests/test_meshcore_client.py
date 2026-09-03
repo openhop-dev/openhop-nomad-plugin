@@ -1,10 +1,13 @@
 import asyncio
 
 import pytest
-from openhop_core.companion.constants import RESP_CODE_SENT
+from openhop_core.companion.constants import (
+    RESP_CODE_CHANNEL_MSG_RECV_V3,
+    RESP_CODE_NO_MORE_MESSAGES,
+    RESP_CODE_SENT,
+)
 
 from meshcore_nomad_bridge.meshcore_client import MeshCoreClient
-from openhop_core.companion.constants import RESP_CODE_CHANNEL_MSG_RECV_V3, RESP_CODE_NO_MORE_MESSAGES
 
 
 @pytest.mark.asyncio
