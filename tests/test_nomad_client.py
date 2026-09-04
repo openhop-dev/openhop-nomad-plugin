@@ -1,6 +1,247 @@
+import asyncio
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import pytest
 
+from meshcore_nomad_bridge import nomad_client
 from meshcore_nomad_bridge.nomad_client import NomadClient, NomadUnavailable
+
+
+async def _request_raw_response(raw_response: bytes) -> tuple[int, str]:
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(raw_response)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        return await nomad_client._default_http_request(
+            method="GET",
+            url=f"http://127.0.0.1:{port}/test",
+            payload=None,
+            timeout_seconds=2,
+        )
+
+
+class RedirectHandler(BaseHTTPRequestHandler):
+    followed = False
+
+    def do_GET(self) -> None:
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/followed")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        type(self).followed = True
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return None
+
+
+def test_http_request_rejects_control_characters_in_target() -> None:
+    parsed = nomad_client.urlsplit("http://127.0.0.1")
+
+    with pytest.raises(OSError, match="invalid_url"):
+        nomad_client._build_http_request(
+            method="GET", parsed=parsed, path="/ok\r\nX-Injected: yes", body=None
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_http_request_does_not_follow_redirects() -> None:
+    RedirectHandler.followed = False
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = await nomad_client._default_http_request(
+            method="GET",
+            url=f"http://127.0.0.1:{server.server_port}/redirect",
+            payload=None,
+            timeout_seconds=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    assert status == 302
+    assert body == ""
+    assert RedirectHandler.followed is False
+
+
+class SlowTrickleHandler(BaseHTTPRequestHandler):
+    disconnected = threading.Event()
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "20")
+        self.end_headers()
+        for _ in range(20):
+            try:
+                self.wfile.write(b"x")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                type(self).disconnected.set()
+                break
+            time.sleep(0.05)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_default_http_request_enforces_total_deadline(monkeypatch) -> None:
+    async def forbid_worker_thread(*args: object, **kwargs: object):
+        raise AssertionError("HTTP transport must not use a non-cancellable worker thread")
+
+    monkeypatch.setattr(asyncio, "to_thread", forbid_worker_thread)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowTrickleHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises((OSError, TimeoutError)):
+            await nomad_client._default_http_request(
+                method="GET",
+                url=f"http://127.0.0.1:{server.server_port}/slow",
+                payload=None,
+                timeout_seconds=0.15,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    assert time.monotonic() - started < 0.7
+
+
+@pytest.mark.asyncio
+async def test_connection_close_body_waits_for_all_fragments() -> None:
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nabc")
+        await writer.drain()
+        await asyncio.sleep(0.05)
+        writer.write(b"def")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        status, body = await nomad_client._default_http_request(
+            method="GET",
+            url=f"http://127.0.0.1:{port}/fragmented",
+            payload=None,
+            timeout_seconds=2,
+        )
+
+    assert status == 200
+    assert body == "abcdef"
+
+
+@pytest.mark.asyncio
+async def test_oversized_http_header_is_a_controlled_network_error() -> None:
+    raw = b"HTTP/1.1 200 OK\r\nX-Large: " + (b"x" * 70_000) + b"\r\n\r\n"
+
+    with pytest.raises(OSError, match="invalid_http_response"):
+        await _request_raw_response(raw)
+
+
+@pytest.mark.asyncio
+async def test_chunked_response_is_decoded() -> None:
+    status, body = await _request_raw_response(
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        b"3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"
+    )
+
+    assert status == 200
+    assert body == "abcdef"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_response",
+    [
+        b"HTTP/1.1 20 Weird\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 bad\x00reason\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Length: +2\r\n\r\n{}",
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n"
+            b"2\r\n{}\r\n0\r\n\r\n"
+        ),
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: notchunked\r\n\r\n"
+            b"2\r\n{}\r\n0\r\n\r\n"
+        ),
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            b"2\r\n{}\r\n0\r\ngarbage\r\n\r\n"
+        ),
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            b"2;bad=\x00\r\n{}\r\n0\r\n\r\n"
+        ),
+    ],
+)
+async def test_malformed_http_framing_is_rejected(raw_response: bytes) -> None:
+    with pytest.raises(OSError, match="invalid_http_response"):
+        await _request_raw_response(raw_response)
+
+
+@pytest.mark.asyncio
+async def test_chunked_response_rejects_missing_terminal_line() -> None:
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"1\r\nx\r\n0\r\n")
+    reader.feed_eof()
+
+    with pytest.raises(OSError, match="invalid_http_response"):
+        await nomad_client._read_chunked_body(reader)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [0, 262_144])
+async def test_response_body_accepts_exact_size_boundary(size: int) -> None:
+    status, body = await _request_raw_response(
+        f"HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n".encode() + b"x" * size
+    )
+
+    assert status == 200
+    assert len(body) == size
+
+
+@pytest.mark.asyncio
+async def test_default_http_request_converts_malformed_http_to_oserror() -> None:
+    with pytest.raises(OSError, match="invalid_http_response"):
+        await _request_raw_response(b"broken\r\n\r\n")
+
+
+@pytest.mark.asyncio
+async def test_default_http_request_rejects_oversized_success_body() -> None:
+    with pytest.raises(OSError, match="response_too_large"):
+        await _request_raw_response(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 262145\r\n\r\n"
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_http_request_rejects_oversized_error_body() -> None:
+    with pytest.raises(OSError, match="response_too_large"):
+        await _request_raw_response(
+            b"HTTP/1.1 500 Error\r\nContent-Length: 262145\r\n\r\n"
+        )
 
 
 @pytest.mark.asyncio
@@ -28,6 +269,7 @@ async def test_nomad_client_success() -> None:
     "status_code,body",
     [
         (500, '{"error":"boom"}'),
+        (302, '{"message":{"content":"redirect body"}}'),
         (200, "not json"),
         (200, '{"message":{}}'),
         (200, '{"message":{"content":""}}'),
@@ -152,3 +394,81 @@ async def test_nomad_client_reset_session_for_sender_updates_mapping(tmp_path) -
     assert reset_id == 102
     data = session_map.read_text(encoding="utf-8")
     assert data == '{"sender-b": 102}'
+
+
+@pytest.mark.asyncio
+async def test_persistent_mode_serializes_session_creation_per_sender(tmp_path) -> None:
+    creates = 0
+
+    async def fake_request(
+        *,
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout_seconds: float,
+    ):
+        nonlocal creates
+        _ = (payload, timeout_seconds)
+        if method == "POST" and url == "http://nomad.local/api/chat/sessions":
+            creates += 1
+            await asyncio.sleep(0.02)
+            return 201, '{"id":"42"}'
+        if method == "GET" and url == "http://nomad.local/api/chat/sessions/42":
+            return 200, '{"messages":[]}'
+        if method == "POST" and url == "http://nomad.local/api/ollama/chat":
+            return 200, '{"message":{"content":"ok"}}'
+        raise AssertionError(f"Unexpected request: {method} {url}")
+
+    client = NomadClient(
+        base_url="http://nomad.local",
+        model="test-model",
+        timeout_seconds=5,
+        collection=None,
+        one_shot=False,
+        session_map_path=str(tmp_path / "sessions.json"),
+        http_request=fake_request,
+    )
+
+    answers = await asyncio.gather(
+        client.ask_for_sender("sender-c", "first"),
+        client.ask_for_sender("sender-c", "second"),
+    )
+
+    assert answers == ["ok", "ok"]
+    assert creates == 1
+
+
+@pytest.mark.asyncio
+async def test_persistent_history_is_limited_to_recent_messages(tmp_path) -> None:
+    messages = [{"role": "user", "content": str(index)} for index in range(25)]
+
+    async def fake_request(**kwargs):
+        _ = kwargs
+        return 200, json.dumps({"messages": messages})
+
+    client = NomadClient(
+        base_url="http://nomad.local",
+        model="test-model",
+        timeout_seconds=5,
+        collection=None,
+        one_shot=False,
+        session_map_path=str(tmp_path / "sessions.json"),
+        http_request=fake_request,
+    )
+
+    history = await client._get_session_messages(42)
+
+    assert len(history) == 20
+    assert history[0]["content"] == "5"
+    assert history[-1]["content"] == "24"
+
+
+def test_persistent_history_is_limited_by_utf8_bytes() -> None:
+    messages = [
+        {"role": "user", "content": "x" * 9_000},
+        {"role": "assistant", "content": "y" * 9_000},
+    ]
+
+    history = nomad_client._limit_session_history(messages)
+
+    assert history == [messages[-1]]

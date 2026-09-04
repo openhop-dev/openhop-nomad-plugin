@@ -50,7 +50,9 @@ $OPENHOP_PLUGIN_DATA/
 └── nomad_sessions.json
 ```
 
-`nomad_sessions.json` is only used for sender-scoped persistent N.O.M.A.D. conversations when `one_shot` is disabled.
+Persistent conversations are disabled in v0.1.2 because the upstream session lifecycle cannot
+yet be bounded safely. `one_shot` must remain `true`; the session-map setting is retained only
+for configuration compatibility.
 
 When `OPENHOP_PLUGIN_DATA` is not set, existing standalone behaviour is preserved and the session map defaults to `./data/nomad_sessions.json`.
 
@@ -63,7 +65,8 @@ Minimum configuration:
 ```json
 {
   "nomad_url": "http://192.168.0.170:8080",
-  "nomad_model": "qwen2.5:3b-instruct"
+  "nomad_model": "qwen2.5:3b-instruct",
+  "allowed_sender_prefixes": ["001122334455"]
 }
 ```
 
@@ -78,7 +81,12 @@ Typical configuration:
   "nomad_collection": null,
   "nomad_timeout_seconds": 120,
   "one_shot": true,
-  "max_concurrent_requests": 2,
+  "max_concurrent_requests": 1,
+  "max_pending_requests": 1,
+  "max_requests_per_sender": 2,
+  "max_requests_global": 4,
+  "rate_limit_window_seconds": 60,
+  "allowed_sender_prefixes": ["001122334455"],
   "busy_wait_seconds": 5,
   "max_reply_chunks": 4,
   "max_chunk_bytes": 145,
@@ -97,6 +105,15 @@ built-in defaults
     < environment variables
 ```
 
+An empty `allowed_sender_prefixes` list denies every MeshCore sender. Set it to the exact
+12-character sender prefixes that may use NOMAD. `one_shot` must remain `true`. The default
+limits permit one active request, two requests per sender per minute, and four requests
+globally per minute.
+Rejected overload and authorization traffic is dropped without an RF reply. NOMAD HTTP
+responses are capped at 256 KiB, redirects are not followed, and the configured timeout is
+an end-to-end request deadline implemented without non-cancellable worker threads. `NOMAD_URL`
+must use an IP literal so DNS resolution cannot outlive that deadline.
+
 This keeps environment variables available for development and existing standalone deployments.
 
 Important environment overrides include:
@@ -110,6 +127,11 @@ Important environment overrides include:
 - `ONE_SHOT`
 - `NOMAD_SESSION_MAP_PATH`
 - `MAX_CONCURRENT_REQUESTS`
+- `MAX_PENDING_REQUESTS`
+- `MAX_REQUESTS_PER_SENDER`
+- `MAX_REQUESTS_GLOBAL`
+- `RATE_LIMIT_WINDOW_SECONDS`
+- `ALLOWED_SENDER_PREFIXES` (comma-separated 12-character hexadecimal sender prefixes)
 - `NOMAD_BUSY_WAIT_SECONDS`
 - `MAX_REPLY_CHUNKS`
 - `MAX_CHUNK_BYTES`
@@ -130,7 +152,7 @@ Important environment overrides include:
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -174,7 +196,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.1-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.2-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

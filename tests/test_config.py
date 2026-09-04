@@ -5,7 +5,6 @@ import pytest
 
 from meshcore_nomad_bridge.config import ConfigError, Settings
 
-
 _ENV_KEYS = (
     "OPENHOP_PLUGIN_DATA",
     "MESHCORE_HOST",
@@ -17,6 +16,11 @@ _ENV_KEYS = (
     "ONE_SHOT",
     "NOMAD_SESSION_MAP_PATH",
     "MAX_CONCURRENT_REQUESTS",
+    "MAX_PENDING_REQUESTS",
+    "MAX_REQUESTS_PER_SENDER",
+    "MAX_REQUESTS_GLOBAL",
+    "RATE_LIMIT_WINDOW_SECONDS",
+    "ALLOWED_SENDER_PREFIXES",
     "NOMAD_BUSY_WAIT_SECONDS",
     "MAX_REPLY_CHUNKS",
     "MAX_CHUNK_BYTES",
@@ -45,10 +49,15 @@ def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_
         data_dir,
         meshcore_host="127.0.0.2",
         meshcore_port=5056,
-        nomad_url="http://nomad.local:8080",
+        nomad_url="http://10.5.30.7:8080",
         nomad_model="qwen-test",
-        one_shot=False,
+        one_shot=True,
         max_reply_chunks=3,
+        max_pending_requests=3,
+        max_requests_per_sender=2,
+        max_requests_global=7,
+        rate_limit_window_seconds=45,
+        allowed_sender_prefixes=["010203040506", "aabbccddeeff"],
     )
     monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(data_dir))
 
@@ -56,10 +65,15 @@ def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_
 
     assert settings.meshcore_host == "127.0.0.2"
     assert settings.meshcore_port == 5056
-    assert settings.nomad_url == "http://nomad.local:8080"
+    assert settings.nomad_url == "http://10.5.30.7:8080"
     assert settings.nomad_model == "qwen-test"
-    assert settings.one_shot is False
+    assert settings.one_shot is True
     assert settings.max_reply_chunks == 3
+    assert settings.max_pending_requests == 3
+    assert settings.max_requests_per_sender == 2
+    assert settings.max_requests_global == 7
+    assert settings.rate_limit_window_seconds == 45
+    assert settings.allowed_sender_prefixes == ("010203040506", "aabbccddeeff")
 
 
 def test_environment_overrides_plugin_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -67,18 +81,18 @@ def test_environment_overrides_plugin_config(monkeypatch: pytest.MonkeyPatch, tm
     data_dir = tmp_path / "plugin-data"
     _write_config(
         data_dir,
-        nomad_url="http://from-file:8080",
+        nomad_url="http://10.5.30.8:8080",
         nomad_model="file-model",
         meshcore_port=5001,
     )
     monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(data_dir))
-    monkeypatch.setenv("NOMAD_URL", "http://from-env:8080")
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.9:8080")
     monkeypatch.setenv("NOMAD_MODEL", "env-model")
     monkeypatch.setenv("MESHCORE_PORT", "6001")
 
     settings = Settings.from_env()
 
-    assert settings.nomad_url == "http://from-env:8080"
+    assert settings.nomad_url == "http://10.5.30.9:8080"
     assert settings.nomad_model == "env-model"
     assert settings.meshcore_port == 6001
 
@@ -86,7 +100,7 @@ def test_environment_overrides_plugin_config(monkeypatch: pytest.MonkeyPatch, tm
 def test_session_map_defaults_to_plugin_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _clean_env(monkeypatch)
     data_dir = tmp_path / "plugin-data"
-    _write_config(data_dir, nomad_url="http://nomad.local", nomad_model="test-model")
+    _write_config(data_dir, nomad_url="http://10.5.30.7", nomad_model="test-model")
     monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(data_dir))
 
     settings = Settings.from_env()
@@ -96,12 +110,110 @@ def test_session_map_defaults_to_plugin_data(monkeypatch: pytest.MonkeyPatch, tm
 
 def test_standalone_session_map_default_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
-    monkeypatch.setenv("NOMAD_URL", "http://nomad.local")
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.7")
     monkeypatch.setenv("NOMAD_MODEL", "test-model")
 
     settings = Settings.from_env()
 
     assert settings.nomad_session_map_path == "./data/nomad_sessions.json"
+
+
+def test_persistent_mode_is_rejected_even_with_sender_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clean_env(monkeypatch)
+    data_dir = tmp_path / "plugin-data"
+    _write_config(
+        data_dir,
+        nomad_url="http://10.5.30.7",
+        nomad_model="test-model",
+        one_shot=False,
+        allowed_sender_prefixes=["010203040506"],
+    )
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(data_dir))
+
+    with pytest.raises(ConfigError, match="ONE_SHOT"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("NOMAD_TIMEOUT_SECONDS", "nan"),
+        ("NOMAD_TIMEOUT_SECONDS", "inf"),
+        ("RATE_LIMIT_WINDOW_SECONDS", "nan"),
+        ("NOMAD_BUSY_WAIT_SECONDS", "-inf"),
+    ],
+)
+def test_nonfinite_numeric_settings_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.7:8080")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError, match="finite"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://nomad.local:8080",
+        "http://10.5.30.7:bad",
+        "http://10.5.30.7:70000",
+        "http://10.5.30.7/base",
+        "http://10.5.30.7/?query=1",
+    ],
+)
+def test_nomad_url_requires_valid_ip_literal(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", url)
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+
+    with pytest.raises(ConfigError, match="NOMAD_URL"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("template", ["{question} {missing}", "{{question}}"])
+def test_radio_prompt_template_rejects_invalid_fields(
+    monkeypatch: pytest.MonkeyPatch, template: str
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.7:8080")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    monkeypatch.setenv("RADIO_PROMPT_TEMPLATE", template)
+
+    with pytest.raises(ConfigError, match="RADIO_PROMPT_TEMPLATE"):
+        Settings.from_env()
+
+
+def test_environment_parses_comma_separated_sender_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.7")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    monkeypatch.setenv("ALLOWED_SENDER_PREFIXES", "010203040506, AABBCCDDEEFF")
+
+    settings = Settings.from_env()
+
+    assert settings.allowed_sender_prefixes == ("010203040506", "aabbccddeeff")
+
+
+def test_invalid_sender_allowlist_entry_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://10.5.30.7")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    monkeypatch.setenv("ALLOWED_SENDER_PREFIXES", "not-hex")
+
+    with pytest.raises(ConfigError, match="12 hexadecimal"):
+        Settings.from_env()
 
 
 def test_invalid_plugin_config_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

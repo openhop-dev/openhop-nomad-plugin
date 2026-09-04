@@ -5,10 +5,12 @@ import pytest
 
 from meshcore_nomad_bridge.config import Settings
 from meshcore_nomad_bridge.main import (
-    BridgeService,
     NOMAD_BUSY_MESSAGE,
     NOMAD_RESET_MESSAGE,
     NOMAD_TOO_LONG_MESSAGE,
+    BridgeService,
+    DuplicateCache,
+    RequestRateLimiter,
 )
 from meshcore_nomad_bridge.meshcore_client import IncomingMessage
 
@@ -64,6 +66,11 @@ def _settings() -> Settings:
         one_shot=True,
         nomad_session_map_path="./data/test_nomad_sessions.json",
         max_concurrent_requests=2,
+        max_pending_requests=4,
+        max_requests_per_sender=10,
+        max_requests_global=50,
+        rate_limit_window_seconds=60.0,
+        allowed_sender_prefixes=("010203040506", "111213141516"),
         busy_wait_seconds=0.2,
         max_reply_chunks=4,
         max_chunk_bytes=145,
@@ -75,15 +82,34 @@ def _settings() -> Settings:
     )
 
 
-def _msg(text: str, ts: int = 1) -> IncomingMessage:
+def _msg(text: str, ts: int = 1, sender: bytes = b"\x01\x02\x03\x04\x05\x06") -> IncomingMessage:
     return IncomingMessage(
-        sender_prefix=b"\x01\x02\x03\x04\x05\x06",
+        sender_prefix=sender,
         text=text,
         timestamp=ts,
         txt_type=0,
         path_len=0xFF,
         snr=1.0,
     )
+
+
+class ExplodingNomad(SlowNomad):
+    async def ask_for_sender(self, sender_id: str, prompt: str) -> str:
+        raise RuntimeError("unexpected failure")
+
+
+@pytest.mark.asyncio
+async def test_background_task_exception_is_retrieved_and_logged(caplog) -> None:
+    service = BridgeService(
+        settings=_settings(), meshcore=FakeMeshCore(), nomad=ExplodingNomad(delay=0)
+    )
+
+    await service._dispatch_message(_msg("explode", ts=700))
+    tasks = list(service._inflight)
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert "Unhandled message task error" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -97,6 +123,14 @@ async def test_duplicate_message_processed_once() -> None:
     await service._handle_message(_msg("hello", ts=100))
 
     assert nomad.calls == 1
+
+
+def test_duplicate_key_uses_sha256_digest() -> None:
+    service = BridgeService(settings=_settings(), meshcore=FakeMeshCore(), nomad=SlowNomad())
+
+    digest = service._dedupe_key(_msg("hello", ts=100)).rsplit(":", 1)[-1]
+
+    assert len(digest) == 64
 
 
 @pytest.mark.asyncio
@@ -142,6 +176,179 @@ async def test_overload_returns_busy_message() -> None:
     await asyncio.gather(t1, t2)
 
     assert any(text == NOMAD_BUSY_MESSAGE for _, text in mesh.sent)
+
+
+@pytest.mark.asyncio
+async def test_zero_busy_wait_uses_immediately_available_capacity() -> None:
+    settings = replace(_settings(), max_concurrent_requests=1, busy_wait_seconds=0)
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._handle_message(_msg("first", ts=13))
+
+    assert nomad.calls == 1
+    assert all(text != NOMAD_BUSY_MESSAGE for _, text in mesh.sent)
+
+
+def test_duplicate_cache_expires_entries_below_prune_threshold(monkeypatch) -> None:
+    now = 100.0
+    monkeypatch.setattr("meshcore_nomad_bridge.main.time.monotonic", lambda: now)
+    cache = DuplicateCache(ttl_seconds=60)
+
+    assert cache.seen("key") is False
+    now = 161.0
+
+    assert cache.seen("key") is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_silently_drops_when_pending_limit_is_full() -> None:
+    settings = replace(
+        _settings(),
+        max_concurrent_requests=1,
+        max_pending_requests=1,
+        busy_wait_seconds=1.0,
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0.05)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(_msg("first", ts=201))
+    await service._dispatch_message(_msg("second", ts=202))
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 1
+    assert [text for _, text in mesh.sent] == ["A concise answer from NOMAD."]
+
+
+@pytest.mark.asyncio
+async def test_pending_rejection_does_not_mark_message_as_duplicate() -> None:
+    settings = replace(
+        _settings(),
+        max_concurrent_requests=1,
+        max_pending_requests=1,
+        max_requests_per_sender=3,
+        busy_wait_seconds=1.0,
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0.05)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+    rejected = _msg("retry me", ts=211)
+
+    await service._dispatch_message(_msg("first", ts=210))
+    await service._dispatch_message(rejected)
+    await asyncio.gather(*list(service._inflight))
+    await service._dispatch_message(rejected)
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_silently_rate_limits_each_sender() -> None:
+    settings = replace(
+        _settings(),
+        max_pending_requests=4,
+        max_requests_per_sender=1,
+        max_requests_global=10,
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(_msg("first", ts=301))
+    await service._dispatch_message(_msg("second", ts=302))
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 1
+    assert [text for _, text in mesh.sent] == ["A concise answer from NOMAD."]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_silently_enforces_global_rate_limit() -> None:
+    settings = replace(
+        _settings(),
+        max_pending_requests=4,
+        max_requests_per_sender=3,
+        max_requests_global=1,
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(
+        _msg("first", ts=401, sender=b"\x01\x02\x03\x04\x05\x06")
+    )
+    await service._dispatch_message(
+        _msg("second", ts=402, sender=b"\x11\x12\x13\x14\x15\x16")
+    )
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 1
+    assert [text for _, text in mesh.sent] == ["A concise answer from NOMAD."]
+
+
+@pytest.mark.asyncio
+async def test_empty_sender_allowlist_rejects_all_requests() -> None:
+    settings = replace(_settings(), allowed_sender_prefixes=())
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(_msg("blocked", ts=499))
+    await asyncio.sleep(0)
+
+    assert nomad.calls == 0
+    assert mesh.sent == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_silently_rejects_sender_outside_allowlist() -> None:
+    settings = replace(
+        _settings(),
+        allowed_sender_prefixes=("aabbccddeeff",),
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(_msg("not allowed", ts=501))
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 0
+    assert mesh.sent == []
+
+
+def test_rate_limiter_allows_requests_after_window_expires(monkeypatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr("meshcore_nomad_bridge.main.time.monotonic", lambda: now[0])
+    limiter = RequestRateLimiter(per_sender=1, global_limit=1, window_seconds=60)
+
+    assert limiter.allow("sender") is True
+    assert limiter.allow("sender") is False
+    now[0] = 161.0
+    assert limiter.allow("sender") is True
+
+
+@pytest.mark.asyncio
+async def test_duplicate_retransmission_does_not_consume_rate_capacity() -> None:
+    settings = replace(
+        _settings(),
+        max_pending_requests=4,
+        max_requests_per_sender=2,
+        max_requests_global=10,
+    )
+    mesh = FakeMeshCore()
+    nomad = SlowNomad(delay=0)
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
+
+    await service._dispatch_message(_msg("first", ts=601))
+    await service._dispatch_message(_msg("first", ts=601))
+    await service._dispatch_message(_msg("second", ts=602))
+    await asyncio.gather(*list(service._inflight))
+
+    assert nomad.calls == 2
 
 
 @pytest.mark.asyncio

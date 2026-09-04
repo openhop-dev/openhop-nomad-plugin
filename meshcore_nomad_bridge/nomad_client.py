@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import socket
+import ssl
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
-from typing import Any, Awaitable, Callable
-from urllib import error as urlerror
-from urllib import request as urlrequest
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
+
+MAX_HTTP_RESPONSE_BYTES = 262_144
+MAX_HTTP_HEADER_BYTES = 65_536
+HTTP_TOKEN_BYTES = frozenset(
+    b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
+MAX_SESSION_HISTORY_MESSAGES = 20
+MAX_SESSION_HISTORY_BYTES = 16_384
 
 
 class NomadUnavailable(RuntimeError):
@@ -42,6 +53,7 @@ class NomadClient:
         self._one_shot = one_shot
         self._session_map_path = Path(session_map_path)
         self._state_lock = asyncio.Lock()
+        self._sender_locks: dict[str, asyncio.Lock] = {}
 
         if http_request is not None:
             self._http_request = http_request
@@ -65,6 +77,11 @@ class NomadClient:
         if self._one_shot:
             return await self.ask(prompt)
 
+        sender_lock = await self._get_sender_lock(sender_id)
+        async with sender_lock:
+            return await self._ask_persistent_for_sender(sender_id, prompt)
+
+    async def _ask_persistent_for_sender(self, sender_id: str, prompt: str) -> str:
         session_id = await self._get_or_create_session_id(sender_id)
         try:
             history = await self._get_session_messages(session_id)
@@ -80,7 +97,9 @@ class NomadClient:
     async def reset_session_for_sender(self, sender_id: str) -> int:
         if self._one_shot:
             raise NomadUnavailable("reset_not_supported_in_one_shot")
-        return await self._create_fresh_session_for_sender(sender_id)
+        sender_lock = await self._get_sender_lock(sender_id)
+        async with sender_lock:
+            return await self._create_fresh_session_for_sender(sender_id)
 
     async def _chat(
         self,
@@ -118,7 +137,7 @@ class NomadClient:
         elapsed = monotonic() - start
         logger.info("NOMAD completed in %.2fs", elapsed)
 
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD request failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -156,6 +175,10 @@ class NomadClient:
             return existing
         return await self._create_fresh_session_for_sender(sender_id)
 
+    async def _get_sender_lock(self, sender_id: str) -> asyncio.Lock:
+        async with self._state_lock:
+            return self._sender_locks.setdefault(sender_id, asyncio.Lock())
+
     async def _create_fresh_session_for_sender(self, sender_id: str) -> int:
         payload: dict[str, object] = {
             "title": f"MeshCore {sender_id}",
@@ -176,7 +199,7 @@ class NomadClient:
             logger.warning("NOMAD network error while creating session: %s", exc)
             raise NomadUnavailable("network") from exc
 
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD create session failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -210,7 +233,7 @@ class NomadClient:
 
         if status_code == 404:
             raise _NomadSessionNotFound(session_id)
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD get session failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -233,7 +256,7 @@ class NomadClient:
             if not isinstance(content, str):
                 continue
             messages.append({"role": role, "content": content})
-        return messages
+        return _limit_session_history(messages)
 
     def _load_session_map(self) -> dict[str, int]:
         try:
@@ -291,6 +314,23 @@ def _parse_json_object(body: str) -> dict[str, Any]:
     return data
 
 
+def _limit_session_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    used_bytes = 0
+    for message in reversed(messages):
+        if len(selected) >= MAX_SESSION_HISTORY_MESSAGES:
+            break
+        message_bytes = len(message["role"].encode("utf-8")) + len(
+            message["content"].encode("utf-8")
+        )
+        if used_bytes + message_bytes > MAX_SESSION_HISTORY_BYTES:
+            break
+        selected.append(message)
+        used_bytes += message_bytes
+    selected.reverse()
+    return selected
+
+
 def _wrap_post_only(http_post: HttpPost) -> HttpRequest:
     async def _request(
         *,
@@ -316,24 +356,204 @@ async def _default_http_request(
     timeout_seconds: float,
 ) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
-
-    def _send() -> tuple[int, str]:
-        req = urlrequest.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method=method,
+    try:
+        return await asyncio.wait_for(
+            _async_http_request(method=method, url=url, body=body),
+            timeout=timeout_seconds,
         )
-        try:
-            with urlrequest.urlopen(req, timeout=timeout_seconds) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-                return int(response.status), raw
-        except urlerror.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-            return int(exc.code), raw
-        except TimeoutError:
-            raise
-        except OSError:
-            raise
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError("request_deadline_exceeded") from exc
 
-    return await asyncio.to_thread(_send)
+
+async def _async_http_request(
+    *,
+    method: str,
+    url: str,
+    body: bytes | None,
+) -> tuple[int, str]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise OSError("invalid_url")
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise OSError("nomad_url_requires_ip_address") from exc
+
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setblocking(False)
+    writer: asyncio.StreamWriter | None = None
+    path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+    try:
+        await asyncio.get_running_loop().sock_connect(sock, (str(address), port))
+        ssl_context = ssl.create_default_context() if parsed.scheme == "https" else None
+        reader, writer = await asyncio.open_connection(
+            sock=sock,
+            ssl=ssl_context,
+            server_hostname=parsed.hostname if ssl_context else None,
+        )
+        sock = None
+        request = _build_http_request(method=method, parsed=parsed, path=path, body=body)
+        writer.write(request)
+        await writer.drain()
+        return await _read_async_http_response(reader, method)
+    finally:
+        if writer is not None:
+            writer.transport.abort()
+        elif sock is not None:
+            sock.close()
+
+
+def _build_http_request(*, method: str, parsed: Any, path: str, body: bytes | None) -> bytes:
+    if method not in {"GET", "POST"}:
+        raise OSError("unsupported_http_method")
+    if not path or any(ord(char) < 33 or ord(char) > 126 for char in path):
+        raise OSError("invalid_url")
+    default_port = 443 if parsed.scheme == "https" else 80
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    if parsed.port and parsed.port != default_port:
+        host = f"{host}:{parsed.port}"
+    headers = [
+        f"{method} {path} HTTP/1.1",
+        f"Host: {host}",
+        "Accept: application/json",
+        "Connection: close",
+    ]
+    if body is not None:
+        headers.extend(("Content-Type: application/json", f"Content-Length: {len(body)}"))
+    try:
+        return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + (body or b"")
+    except UnicodeEncodeError as exc:
+        raise OSError("invalid_url") from exc
+
+
+async def _read_async_http_response(
+    reader: asyncio.StreamReader, method: str
+) -> tuple[int, str]:
+    status_line = await _read_http_line(reader)
+    if not status_line.endswith(b"\r\n"):
+        raise OSError("invalid_http_response")
+    parts = status_line[:-2].split(b" ", 2)
+    try:
+        version, raw_status = parts[0], parts[1]
+        if version not in {b"HTTP/1.0", b"HTTP/1.1"}:
+            raise ValueError
+        if len(raw_status) != 3 or not raw_status.isdigit():
+            raise ValueError
+        if len(parts) == 3 and any(
+            (byte < 32 and byte != 9) or byte == 127 for byte in parts[2]
+        ):
+            raise ValueError
+        status = int(raw_status)
+        if not 100 <= status <= 599:
+            raise ValueError
+    except (IndexError, ValueError) as exc:
+        raise OSError("invalid_http_response") from exc
+
+    header_bytes = len(status_line)
+    headers: dict[str, str] = {}
+    while True:
+        line = await _read_http_line(reader)
+        header_bytes += len(line)
+        if not line or header_bytes > MAX_HTTP_HEADER_BYTES:
+            raise OSError("invalid_http_response")
+        if line == b"\r\n":
+            break
+        key, value = _parse_header_line(line)
+        if key in headers:
+            raise OSError("invalid_http_response")
+        headers[key] = value
+
+    transfer_encoding = headers.get("transfer-encoding")
+    if transfer_encoding is not None and "content-length" in headers:
+        raise OSError("invalid_http_response")
+    if method == "HEAD" or status in {204, 304} or 100 <= status < 200:
+        raw = b""
+    elif transfer_encoding is not None:
+        if transfer_encoding.lower() != "chunked":
+            raise OSError("invalid_http_response")
+        raw = await _read_chunked_body(reader)
+    elif "content-length" in headers:
+        raw_length = headers["content-length"]
+        if not raw_length.isascii() or not raw_length.isdigit():
+            raise OSError("invalid_http_response")
+        length = int(raw_length)
+        if length > MAX_HTTP_RESPONSE_BYTES:
+            raise OSError("response_too_large")
+        try:
+            raw = await reader.readexactly(length)
+        except asyncio.IncompleteReadError as exc:
+            raise OSError("invalid_http_response") from exc
+    else:
+        try:
+            raw = await reader.readexactly(MAX_HTTP_RESPONSE_BYTES + 1)
+        except asyncio.IncompleteReadError as exc:
+            raw = exc.partial
+        if len(raw) > MAX_HTTP_RESPONSE_BYTES:
+            raise OSError("response_too_large")
+    return status, raw.decode("utf-8", errors="replace")
+
+
+async def _read_chunked_body(reader: asyncio.StreamReader) -> bytes:
+    body = bytearray()
+    framing_bytes = 0
+    while True:
+        size_line = await _read_http_line(reader)
+        framing_bytes += len(size_line)
+        if framing_bytes > MAX_HTTP_HEADER_BYTES:
+            raise OSError("invalid_http_response")
+        if not size_line.endswith(b"\r\n") or b";" in size_line:
+            raise OSError("invalid_http_response")
+        raw_size = size_line[:-2]
+        if not raw_size or any(byte not in b"0123456789abcdefABCDEF" for byte in raw_size):
+            raise OSError("invalid_http_response")
+        try:
+            size = int(raw_size, 16)
+        except ValueError as exc:
+            raise OSError("invalid_http_response") from exc
+        if size == 0:
+            while True:
+                trailer = await _read_http_line(reader)
+                framing_bytes += len(trailer)
+                if framing_bytes > MAX_HTTP_HEADER_BYTES:
+                    raise OSError("invalid_http_response")
+                if trailer == b"\r\n":
+                    return bytes(body)
+                if not trailer:
+                    raise OSError("invalid_http_response")
+                key, _ = _parse_header_line(trailer)
+                if key in {"content-length", "transfer-encoding"}:
+                    raise OSError("invalid_http_response")
+        if size < 0 or len(body) + size > MAX_HTTP_RESPONSE_BYTES:
+            raise OSError("response_too_large")
+        try:
+            body.extend(await reader.readexactly(size))
+            if await reader.readexactly(2) != b"\r\n":
+                raise OSError("invalid_http_response")
+        except asyncio.IncompleteReadError as exc:
+            raise OSError("invalid_http_response") from exc
+
+
+async def _read_http_line(reader: asyncio.StreamReader) -> bytes:
+    try:
+        line = await reader.readline()
+    except ValueError as exc:
+        raise OSError("invalid_http_response") from exc
+    if len(line) > MAX_HTTP_HEADER_BYTES:
+        raise OSError("invalid_http_response")
+    return line
+
+
+def _parse_header_line(line: bytes) -> tuple[str, str]:
+    if not line.endswith(b"\r\n"):
+        raise OSError("invalid_http_response")
+    try:
+        raw_name, raw_value = line[:-2].split(b":", 1)
+    except ValueError as exc:
+        raise OSError("invalid_http_response") from exc
+    if not raw_name or any(byte not in HTTP_TOKEN_BYTES for byte in raw_name):
+        raise OSError("invalid_http_response")
+    if any((byte < 32 and byte != 9) or byte == 127 for byte in raw_value):
+        raise OSError("invalid_http_response")
+    return raw_name.decode("ascii").lower(), raw_value.decode("iso-8859-1").strip()
