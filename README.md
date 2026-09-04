@@ -130,7 +130,7 @@ Important environment overrides include:
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -174,7 +174,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.0-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.1-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:
