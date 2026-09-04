@@ -50,7 +50,7 @@ $OPENHOP_PLUGIN_DATA/
 └── nomad_sessions.json
 ```
 
-Persistent conversations are disabled in v0.1.2 because the upstream session lifecycle cannot
+Persistent conversations are disabled in v0.1.3 because the upstream session lifecycle cannot
 yet be bounded safely. `one_shot` must remain `true`; the session-map setting is retained only
 for configuration compatibility.
 
@@ -89,7 +89,8 @@ Typical configuration:
   "allowed_sender_prefixes": ["001122334455"],
   "busy_wait_seconds": 5,
   "max_reply_chunks": 4,
-  "max_chunk_bytes": 145,
+  "max_chunk_bytes": 80,
+  "reply_chunk_delay_seconds": 2.0,
   "max_prompt_bytes": 1000,
   "radio_prompt_enabled": true,
   "duplicate_ttl_seconds": 600,
@@ -135,6 +136,7 @@ Important environment overrides include:
 - `NOMAD_BUSY_WAIT_SECONDS`
 - `MAX_REPLY_CHUNKS`
 - `MAX_CHUNK_BYTES`
+- `REPLY_CHUNK_DELAY_SECONDS` (0–60 seconds between multi-packet reply chunks)
 - `MAX_PROMPT_BYTES`
 - `RADIO_PROMPT_ENABLED`
 - `RADIO_PROMPT_TEMPLATE`
@@ -152,7 +154,7 @@ Important environment overrides include:
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -196,7 +198,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.2-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

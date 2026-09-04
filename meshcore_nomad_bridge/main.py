@@ -213,8 +213,10 @@ class BridgeService:
             chunks = [NOMAD_UNAVAILABLE_MESSAGE]
 
         logger.info("Sending %d MeshCore reply packets", len(chunks))
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             await self._meshcore.send_text(message.sender_prefix, chunk)
+            if index + 1 < len(chunks) and self._settings.reply_chunk_delay_seconds > 0:
+                await asyncio.sleep(self._settings.reply_chunk_delay_seconds)
 
     def _build_nomad_prompt(self, prompt: str) -> str:
         if not self._settings.radio_prompt_enabled:

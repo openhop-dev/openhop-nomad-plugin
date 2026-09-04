@@ -24,6 +24,7 @@ _ENV_KEYS = (
     "NOMAD_BUSY_WAIT_SECONDS",
     "MAX_REPLY_CHUNKS",
     "MAX_CHUNK_BYTES",
+    "REPLY_CHUNK_DELAY_SECONDS",
     "MAX_PROMPT_BYTES",
     "RADIO_PROMPT_ENABLED",
     "RADIO_PROMPT_TEMPLATE",
@@ -53,6 +54,7 @@ def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_
         nomad_model="qwen-test",
         one_shot=True,
         max_reply_chunks=3,
+        reply_chunk_delay_seconds=2.5,
         max_pending_requests=3,
         max_requests_per_sender=2,
         max_requests_global=7,
@@ -69,6 +71,7 @@ def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.nomad_model == "qwen-test"
     assert settings.one_shot is True
     assert settings.max_reply_chunks == 3
+    assert settings.reply_chunk_delay_seconds == 2.5
     assert settings.max_pending_requests == 3
     assert settings.max_requests_per_sender == 2
     assert settings.max_requests_global == 7
@@ -143,6 +146,7 @@ def test_persistent_mode_is_rejected_even_with_sender_allowlist(
         ("NOMAD_TIMEOUT_SECONDS", "inf"),
         ("RATE_LIMIT_WINDOW_SECONDS", "nan"),
         ("NOMAD_BUSY_WAIT_SECONDS", "-inf"),
+        ("REPLY_CHUNK_DELAY_SECONDS", "inf"),
     ],
 )
 def test_nonfinite_numeric_settings_are_rejected(

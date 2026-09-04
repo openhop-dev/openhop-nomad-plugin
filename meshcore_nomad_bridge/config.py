@@ -44,6 +44,7 @@ class Settings:
 
     max_reply_chunks: int
     max_chunk_bytes: int
+    reply_chunk_delay_seconds: float
     max_prompt_bytes: int
 
     radio_prompt_enabled: bool
@@ -83,7 +84,8 @@ class Settings:
         busy_wait_seconds = _get_float("NOMAD_BUSY_WAIT_SECONDS", 5.0, config)
 
         max_reply_chunks = _get_int("MAX_REPLY_CHUNKS", 4, config)
-        max_chunk_bytes = _get_int("MAX_CHUNK_BYTES", 145, config)
+        max_chunk_bytes = _get_int("MAX_CHUNK_BYTES", 80, config)
+        reply_chunk_delay_seconds = _get_float("REPLY_CHUNK_DELAY_SECONDS", 2.0, config)
         max_prompt_bytes = _get_int("MAX_PROMPT_BYTES", 1000, config)
 
         radio_prompt_enabled = _get_bool("RADIO_PROMPT_ENABLED", True, config)
@@ -122,6 +124,7 @@ class Settings:
             busy_wait_seconds=busy_wait_seconds,
             max_reply_chunks=max_reply_chunks,
             max_chunk_bytes=max_chunk_bytes,
+            reply_chunk_delay_seconds=reply_chunk_delay_seconds,
             max_prompt_bytes=max_prompt_bytes,
             radio_prompt_enabled=radio_prompt_enabled,
             radio_prompt_template=radio_prompt_template,
@@ -280,6 +283,7 @@ def _validate(settings: Settings) -> None:
         "NOMAD_TIMEOUT_SECONDS": settings.nomad_timeout_seconds,
         "RATE_LIMIT_WINDOW_SECONDS": settings.rate_limit_window_seconds,
         "NOMAD_BUSY_WAIT_SECONDS": settings.busy_wait_seconds,
+        "REPLY_CHUNK_DELAY_SECONDS": settings.reply_chunk_delay_seconds,
     }
     for name, value in numeric_settings.items():
         if not math.isfinite(value):
@@ -308,6 +312,8 @@ def _validate(settings: Settings) -> None:
         raise ConfigError("MAX_REPLY_CHUNKS must be > 0")
     if settings.max_chunk_bytes < 40:
         raise ConfigError("MAX_CHUNK_BYTES must be >= 40")
+    if not 0 <= settings.reply_chunk_delay_seconds <= 60:
+        raise ConfigError("REPLY_CHUNK_DELAY_SECONDS must be between 0 and 60")
     if settings.max_prompt_bytes <= 0:
         raise ConfigError("MAX_PROMPT_BYTES must be > 0")
 

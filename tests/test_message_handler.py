@@ -74,12 +74,36 @@ def _settings() -> Settings:
         busy_wait_seconds=0.2,
         max_reply_chunks=4,
         max_chunk_bytes=145,
+        reply_chunk_delay_seconds=2.0,
         max_prompt_bytes=1000,
         radio_prompt_enabled=False,
         radio_prompt_template="{question}",
         duplicate_ttl_seconds=600,
         log_level="INFO",
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_chunks_are_spaced_except_after_last(monkeypatch) -> None:
+    class ChunkedNomad(SlowNomad):
+        async def ask_for_sender(self, sender_id: str, prompt: str) -> str:
+            _ = (sender_id, prompt)
+            return "x" * 95
+
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("meshcore_nomad_bridge.main.asyncio.sleep", record_sleep)
+    settings = replace(_settings(), max_chunk_bytes=40, reply_chunk_delay_seconds=2.0)
+    mesh = FakeMeshCore()
+    service = BridgeService(settings=settings, meshcore=mesh, nomad=ChunkedNomad())
+
+    await service._handle_message(_msg("chunk this", ts=701))
+
+    assert len(mesh.sent) == 3
+    assert delays == [2.0, 2.0]
 
 
 def _msg(text: str, ts: int = 1, sender: bytes = b"\x01\x02\x03\x04\x05\x06") -> IncomingMessage:
