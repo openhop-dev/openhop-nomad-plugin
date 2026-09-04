@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openhop-nomad-plugin"
-version = "0.1.0"
+version = "0.1.1"
 description = "openHop service plugin bridging a MeshCore Companion identity to Project N.O.M.A.D."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ authors = [
   { name = "OpenHop Community" }
 ]
 dependencies = [
-  "openhop_core @ git+https://github.com/openhop-dev/openhop_core.git@dev"
+  "openhop-core==1.1.1"
 ]
 
 [project.optional-dependencies]
