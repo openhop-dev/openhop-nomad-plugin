@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openhop-nomad-plugin"
-version = "0.1.1"
+version = "0.1.2"
 description = "openHop service plugin bridging a MeshCore Companion identity to Project N.O.M.A.D."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,11 @@ include = ["meshcore_nomad_bridge*"]
 
 [tool.setuptools.data-files]
 "share/openhop/plugins/openhop.nomad" = ["openhop-plugin.json", "config.default.json"]
+"share/openhop/plugins/openhop.nomad/ui" = [
+  "ui/index.html",
+  "ui/app.js",
+  "ui/styles.css"
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

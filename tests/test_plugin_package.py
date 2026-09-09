@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
-import tomllib
 
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,7 +14,7 @@ def _project() -> dict[str, object]:
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
 
-def test_manifest_declares_simple_python_service_plugin() -> None:
+def test_manifest_declares_python_service_plugin_with_ui() -> None:
     manifest = _manifest()
 
     assert manifest["schema"] == 1
@@ -24,7 +24,10 @@ def test_manifest_declares_simple_python_service_plugin() -> None:
         "type": "python",
         "entrypoint": "meshcore-nomad-bridge",
     }
-    assert "ui" not in manifest
+    assert manifest["ui"] == {
+        "type": "application",
+        "entry": "ui/index.html",
+    }
     assert "permissions" not in manifest
 
 

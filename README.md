@@ -84,6 +84,7 @@ Typical configuration:
   "max_chunk_bytes": 145,
   "max_prompt_bytes": 1000,
   "radio_prompt_enabled": true,
+  "radio_prompt_template": "You are answering a question received over a low-bandwidth MeshCore radio network.\\nGive the most useful answer first.\\n...\\n\\nUser question:\\n{question}",
   "duplicate_ttl_seconds": 600,
   "log_level": "INFO"
 }
@@ -123,22 +124,26 @@ Important environment overrides include:
 
 ## Plugin manifest
 
-`openhop-plugin.json` declares this as a simple Python service plugin:
+`openhop-plugin.json` declares this as a Python service plugin with a dashboard UI for configuration editing:
 
 ```json
 {
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
+  },
+  "ui": {
+    "type": "application",
+    "entry": "ui/index.html"
   }
 }
 ```
 
-There is deliberately no UI, permission model, Docker runtime or Repeater-internal hook in this plugin package.
+The plugin remains a lightweight service package and does not add a custom permission model, Docker runtime, or Repeater-internal hook.
 
 ## Standalone development
 
@@ -174,7 +179,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.1-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.2-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

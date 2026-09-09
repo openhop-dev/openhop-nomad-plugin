@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>openHop NOMAD Bridge</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div><div class="eyebrow">openHop plugin</div><h1>NOMAD Bridge</h1></div>
+          <span class="version">v0.1.2</span>
+      </div>
+      <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Loading</span>
+    </header>
+
+    <main>
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+      <section class="card hero">
+        <div>
+          <div class="eyebrow">Plugin configuration</div>
+          <h2>Companion to NOMAD bridge settings</h2>
+          <p class="muted">Configure companion server connectivity, NOMAD target details, and payload limits from the openHop dashboard.</p>
+        </div>
+        <div class="quick-facts">
+          <div><span>Companion endpoint</span><strong id="overview-meshcore">127.0.0.1:5001</strong></div>
+          <div><span>NOMAD endpoint</span><strong id="overview-nomad">http://127.0.0.1:8080</strong></div>
+          <div><span>Model</span><strong id="overview-model">qwen2.5:3b-instruct</strong></div>
+        </div>
+      </section>
+
+      <form id="settings-form">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">Runtime</span>
+            <h2>Settings</h2>
+            <p class="muted">Changes are written to plugin settings and the plugin restarts to apply them.</p>
+          </div>
+          <div class="settings-actions">
+            <button id="reload-settings" class="button ghost" type="button">Reload</button>
+            <button class="button primary" type="submit">Save and restart</button>
+          </div>
+        </div>
+
+        <section class="card settings-section">
+          <div class="settings-section-heading">
+            <div>
+              <h3>Connectivity</h3>
+              <p>Bridge the openHop companion frame server to the Project NOMAD HTTP API.</p>
+            </div>
+            <span class="section-number">01</span>
+          </div>
+          <div class="form-grid three">
+            <label>Companion host
+              <input id="meshcore_host" type="text" autocomplete="off" placeholder="127.0.0.1">
+            </label>
+            <label>Companion port
+              <input id="meshcore_port" type="number" min="1" max="65535">
+            </label>
+            <label>NOMAD URL
+              <input id="nomad_url" type="url" placeholder="http://127.0.0.1:8080">
+            </label>
+            <label>NOMAD model
+              <input id="nomad_model" type="text" autocomplete="off" placeholder="qwen2.5:3b-instruct">
+            </label>
+            <label class="span-two">Collection (optional)
+              <input id="nomad_collection" type="text" autocomplete="off" placeholder="Leave blank for default">
+              <small>Blank stores null and uses the NOMAD server default collection.</small>
+            </label>
+            <label>Request timeout (seconds)
+              <input id="nomad_timeout_seconds" type="number" min="1" max="600">
+            </label>
+          </div>
+        </section>
+
+        <section class="card settings-section">
+          <div class="settings-section-heading">
+            <div>
+              <h3>Bridge behavior</h3>
+              <p>Control concurrency, duplicate suppression, and prompt formatting behavior.</p>
+            </div>
+            <span class="section-number">02</span>
+          </div>
+          <div class="toggle-grid">
+            <label class="check-card"><input id="one_shot" type="checkbox"><span>One-shot mode</span></label>
+            <label class="check-card"><input id="radio_prompt_enabled" type="checkbox"><span>Radio prompt enabled</span></label>
+          </div>
+          <div class="form-grid three nested">
+            <label>Max concurrent requests
+              <input id="max_concurrent_requests" type="number" min="1" max="32">
+            </label>
+            <label>Busy wait (seconds)
+              <input id="busy_wait_seconds" type="number" min="0" max="120" step="1">
+            </label>
+            <label>Duplicate TTL (seconds)
+              <input id="duplicate_ttl_seconds" type="number" min="0" max="86400" step="1">
+            </label>
+            <label>Log level
+              <select id="log_level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+                <option value="CRITICAL">CRITICAL</option>
+              </select>
+            </label>
+            <label class="span-three">Radio prompt template
+              <textarea id="radio_prompt_template" rows="8" spellcheck="false" placeholder="Template must include {question}"></textarea>
+              <small>Required. Must include <code>{question}</code> so the incoming user message can be injected.</small>
+            </label>
+          </div>
+        </section>
+
+        <section class="card settings-section">
+          <div class="settings-section-heading">
+            <div>
+              <h3>Radio payload limits</h3>
+              <p>Tune downstream chunking limits to match your mesh link quality and radio constraints.</p>
+            </div>
+            <span class="section-number">03</span>
+          </div>
+          <div class="form-grid three">
+            <label>Max reply chunks
+              <input id="max_reply_chunks" type="number" min="1" max="32">
+            </label>
+            <label>Max chunk bytes
+              <input id="max_chunk_bytes" type="number" min="64" max="1024">
+            </label>
+            <label>Max prompt bytes
+              <input id="max_prompt_bytes" type="number" min="128" max="8192">
+            </label>
+          </div>
+        </section>
+      </form>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
