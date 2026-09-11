@@ -57,6 +57,12 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             "(img) => img.complete && img.naturalWidth > 0"
         )
         expected = {
+            "meshcore_host",
+            "meshcore_port",
+            "nomad_url",
+            "nomad_model",
+            "nomad_collection",
+            "nomad_timeout_seconds",
             "one_shot",
             "radio_prompt_enabled",
             "max_concurrent_requests",
@@ -145,8 +151,8 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                 page.set_viewport_size({"width": width, "height": 900})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}.png"), full_page=True)
-                page.get_by_role("button", name="Max chunk bytes", exact=True).click()
-                assert page.locator("#help-max_chunk_bytes").is_visible()
+                page.get_by_role("button", name="NOMAD URL", exact=True).click()
+                assert page.locator("#help-nomad_url").is_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}-help.png"), full_page=True)
                 page.keyboard.press("Escape")

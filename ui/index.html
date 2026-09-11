@@ -56,25 +56,12 @@
             <span class="section-number">01</span>
           </div>
           <div class="form-grid three">
-            <label>Companion host
-              <input id="meshcore_host" type="text" autocomplete="off" placeholder="127.0.0.1">
-            </label>
-            <label>Companion port
-              <input id="meshcore_port" type="number" min="1" max="65535">
-            </label>
-            <label>NOMAD URL
-              <input id="nomad_url" type="url" placeholder="http://nomad_admin:8080">
-            </label>
-            <label>NOMAD model
-              <input id="nomad_model" type="text" autocomplete="off" placeholder="qwen2.5:3b-instruct">
-            </label>
-            <label class="span-two">Collection (optional)
-              <input id="nomad_collection" type="text" autocomplete="off" placeholder="Leave blank for default">
-              <small>Blank stores null and uses the NOMAD server default collection.</small>
-            </label>
-            <label>Request timeout (seconds)
-              <input id="nomad_timeout_seconds" type="number" min="1" max="600">
-            </label>
+            <div class="field"><button id="label-meshcore_host" type="button" class="help-button" data-field="meshcore_host" aria-expanded="false" aria-controls="help-meshcore_host">Companion host</button><input aria-labelledby="label-meshcore_host" aria-describedby="help-meshcore_host" id="meshcore_host" type="text" autocomplete="off" placeholder="127.0.0.1"><p class="field-help" id="help-meshcore_host" hidden>Default: 127.0.0.1. Address of the Repeater Companion TCP frame server, not NOMAD. Loopback works when the plugin and Companion run in the same host/container network namespace. For a separate host, use its reachable address and secure the connection on a trusted network.</p></div>
+            <div class="field"><button id="label-meshcore_port" type="button" class="help-button" data-field="meshcore_port" aria-expanded="false" aria-controls="help-meshcore_port">Companion port</button><input aria-labelledby="label-meshcore_port" aria-describedby="help-meshcore_port" id="meshcore_port" type="number" min="1" max="65535"><p class="field-help" id="help-meshcore_port" hidden>Default: 5050. TCP port of your dedicated Companion identity in Repeater. Match the port configured there; another identity may use a different port. This is not the NOMAD HTTP port. Existing explicitly configured ports are preserved.</p></div>
+            <div class="field"><button id="label-nomad_url" type="button" class="help-button" data-field="nomad_url" aria-expanded="false" aria-controls="help-nomad_url">NOMAD URL</button><input aria-labelledby="label-nomad_url" aria-describedby="help-nomad_url" id="nomad_url" type="url" placeholder="http://nomad_admin:8080"><p class="field-help" id="help-nomad_url" hidden>Default: http://nomad_admin:8080. Base HTTP(S) address of Project NOMAD, not a direct Ollama endpoint. The Docker name works only when Repeater and NOMAD share a user-defined network; preserve that network in Compose across recreation. For remote or standalone installs use a reachable hostname/IP. Loopback means the plugin’s own network namespace. Use the final URL: redirects and base paths are not supported.</p></div>
+            <div class="field"><button id="label-nomad_model" type="button" class="help-button" data-field="nomad_model" aria-expanded="false" aria-controls="help-nomad_model">NOMAD model</button><input aria-labelledby="label-nomad_model" aria-describedby="help-nomad_model" id="nomad_model" type="text" autocomplete="off" placeholder="qwen2.5:3b-instruct"><p class="field-help" id="help-nomad_model" hidden>Default: qwen2.5:3b-instruct. Exact model identifier NOMAD should use, including its tag. Choose a model already available to NOMAD; changing this field does not download one. Smaller models generally answer faster on limited hardware.</p></div>
+            <div class="field span-two"><button id="label-nomad_collection" type="button" class="help-button" data-field="nomad_collection" aria-expanded="false" aria-controls="help-nomad_collection">Collection (optional)</button><input aria-labelledby="label-nomad_collection" aria-describedby="help-nomad_collection" id="nomad_collection" type="text" autocomplete="off" placeholder="Leave blank for default"><p class="field-help" id="help-nomad_collection" hidden>Optional NOMAD collection identifier sent with chat requests, for retrieval from a collection configured in NOMAD. Leave blank to omit it and let NOMAD apply its default behavior. This does not create or download a collection.</p></div>
+            <div class="field"><button id="label-nomad_timeout_seconds" type="button" class="help-button" data-field="nomad_timeout_seconds" aria-expanded="false" aria-controls="help-nomad_timeout_seconds">Request timeout (seconds)</button><input aria-labelledby="label-nomad_timeout_seconds" aria-describedby="help-nomad_timeout_seconds" id="nomad_timeout_seconds" type="number" min="1" max="600"><p class="field-help" id="help-nomad_timeout_seconds" hidden>Default: 120 seconds. Total deadline for each NOMAD HTTP request, including DNS, connection/TLS, response headers and answer body. Slow models may need longer. This does not include waiting for a bridge concurrency slot or transmitting radio replies. A timeout returns an unavailable reply; it does not guarantee NOMAD has stopped generating.</p></div>
           </div>
         </section>
 
