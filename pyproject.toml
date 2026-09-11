@@ -40,6 +40,8 @@ include = ["meshcore_nomad_bridge*"]
   "ui/styles.css"
 ]
 
+"share/openhop/plugins/openhop.nomad/ui/assets" = ["ui/assets/project_nomad_logo.webp", "ui/assets/NOMAD-LICENSE.txt", "ui/assets/NOTICE.md"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q"

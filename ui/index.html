@@ -13,7 +13,7 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
         <div><div class="eyebrow">openHop plugin</div><h1>NOMAD Bridge</h1></div>
-          <span class="version">v0.1.2</span>
+          <span class="version">v0.1.3</span>
       </div>
       <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Loading</span>
     </header>
@@ -23,6 +23,7 @@
 
       <section class="card hero">
         <div>
+          <img class="nomad-logo" src="assets/project_nomad_logo.webp" alt="Project N.O.M.A.D.">
           <div class="eyebrow">Plugin configuration</div>
           <h2>Companion to NOMAD bridge settings</h2>
           <p class="muted">Configure companion server connectivity, NOMAD target details, and payload limits from the openHop dashboard.</p>
@@ -87,32 +88,38 @@
             <span class="section-number">02</span>
           </div>
           <div class="toggle-grid">
-            <label class="check-card"><input id="one_shot" type="checkbox"><span>One-shot mode</span></label>
-            <label class="check-card"><input id="radio_prompt_enabled" type="checkbox"><span>Radio prompt enabled</span></label>
+            <div class="field "><label class="check-card"><input id="one_shot" aria-describedby="help-one_shot" type="checkbox" disabled><span>One-shot mode</span></label><button type="button" class="help-button" data-field="one_shot" aria-label="Help: one shot" aria-expanded="false" aria-controls="help-one_shot">?</button><p class="field-help" id="help-one_shot" hidden>Required on. Each question starts a fresh NOMAD session without conversation history. Persistent sessions are not bounded upstream and are rejected at startup; this switch cannot be turned off.</p></div>
+            <div class="field "><label class="check-card"><input id="radio_prompt_enabled" aria-describedby="help-radio_prompt_enabled" type="checkbox"><span>Radio prompt enabled</span></label><button type="button" class="help-button" data-field="radio_prompt_enabled" aria-label="Help: radio prompt enabled" aria-expanded="false" aria-controls="help-radio_prompt_enabled">?</button><p class="field-help" id="help-radio_prompt_enabled" hidden>Default: on. Wraps the incoming question in the radio prompt template to request concise plain-text answers. Off sends the question without that wrapper; payload limits still apply.</p></div>
           </div>
           <div class="form-grid three nested">
-            <label>Max concurrent requests
-              <input id="max_concurrent_requests" type="number" min="1" max="32">
-            </label>
-            <label>Busy wait (seconds)
-              <input id="busy_wait_seconds" type="number" min="0" max="120" step="1">
-            </label>
-            <label>Duplicate TTL (seconds)
-              <input id="duplicate_ttl_seconds" type="number" min="0" max="86400" step="1">
-            </label>
-            <label>Log level
-              <select id="log_level">
+<div class="field "><label>Max pending requests<input id="max_pending_requests" aria-describedby="help-max_pending_requests" type="number" min="1" step="1" required></label><button type="button" class="help-button" data-field="max_pending_requests" aria-label="Help: max pending requests" aria-expanded="false" aria-controls="help-max_pending_requests">?</button><p class="field-help" id="help-max_pending_requests" hidden>Default: 1. Caps all accepted requests, including active handlers, requests waiting for a slot, and replies still being sent. Must be at least max concurrent requests. New messages above this limit are silently dropped.</p></div>
+<div class="field "><label>Requests per sender<input id="max_requests_per_sender" aria-describedby="help-max_requests_per_sender" type="number" min="1" step="1" required></label><button type="button" class="help-button" data-field="max_requests_per_sender" aria-label="Help: max requests per sender" aria-expanded="false" aria-controls="help-max_requests_per_sender">?</button><p class="field-help" id="help-max_requests_per_sender" hidden>Default: 2. Maximum accepted requests from one allowed sender within the rate limit window. Must not exceed the global limit. Excess requests are silently dropped.</p></div>
+<div class="field "><label>Requests globally<input id="max_requests_global" aria-describedby="help-max_requests_global" type="number" min="1" step="1" required></label><button type="button" class="help-button" data-field="max_requests_global" aria-label="Help: max requests global" aria-expanded="false" aria-controls="help-max_requests_global">?</button><p class="field-help" id="help-max_requests_global" hidden>Default: 4. Maximum accepted requests across all senders within the rate limit window. Works together with the per-sender cap; excess requests are silently dropped.</p></div>
+<div class="field "><label>Rate limit window (seconds)<input id="rate_limit_window_seconds" aria-describedby="help-rate_limit_window_seconds" type="number" min="0.1" step="any" required></label><button type="button" class="help-button" data-field="rate_limit_window_seconds" aria-label="Help: rate limit window seconds" aria-expanded="false" aria-controls="help-rate_limit_window_seconds">?</button><p class="field-help" id="help-rate_limit_window_seconds" hidden>Default: 60 seconds. Rolling window used by both request rate limits. A longer window reduces how often senders can submit requests. Must be greater than zero.</p></div>
+<div class="field span-three"><label class="span-three">Allowed sender prefixes<textarea id="allowed_sender_prefixes" aria-describedby="help-allowed_sender_prefixes" rows="2" placeholder="One 12-character hexadecimal prefix per line"></textarea></label><button type="button" class="help-button" data-field="allowed_sender_prefixes" aria-label="Help: allowed sender prefixes" aria-expanded="false" aria-controls="help-allowed_sender_prefixes">?</button><p class="field-help" id="help-allowed_sender_prefixes" hidden>Default: empty, which denies everyone. Enter one 12-character hexadecimal sender public-key prefix per line (commas also accepted). Only listed senders can request answers. This is an allowlist, not a public-access toggle.</p></div>
+
+            <div class="field "><label>Max concurrent requests
+              <input id="max_concurrent_requests" aria-describedby="help-max_concurrent_requests" type="number" min="1" max="32">
+            </label><button type="button" class="help-button" data-field="max_concurrent_requests" aria-label="Help: max concurrent requests" aria-expanded="false" aria-controls="help-max_concurrent_requests">?</button><p class="field-help" id="help-max_concurrent_requests" hidden>Default: 1. Maximum simultaneous request handlers. A slot remains occupied while NOMAD answers and the radio reply is sent, not just during HTTP inference. Must not exceed max pending requests.</p></div>
+            <div class="field "><label>Busy wait (seconds)
+              <input id="busy_wait_seconds" aria-describedby="help-busy_wait_seconds" type="number" min="0" max="120" step="1">
+            </label><button type="button" class="help-button" data-field="busy_wait_seconds" aria-label="Help: busy wait seconds" aria-expanded="false" aria-controls="help-busy_wait_seconds">?</button><p class="field-help" id="help-busy_wait_seconds" hidden>Default: 5 seconds. How long an accepted request waits for a concurrency slot before returning a busy reply. Zero returns busy immediately when all slots are occupied; this is not the NOMAD HTTP timeout.</p></div>
+            <div class="field "><label>Duplicate TTL (seconds)
+              <input id="duplicate_ttl_seconds" aria-describedby="help-duplicate_ttl_seconds" type="number" min="60" max="86400" step="1">
+            </label><button type="button" class="help-button" data-field="duplicate_ttl_seconds" aria-label="Help: duplicate ttl seconds" aria-expanded="false" aria-controls="help-duplicate_ttl_seconds">?</button><p class="field-help" id="help-duplicate_ttl_seconds" hidden>Default: 600 seconds; minimum: 60. How long recently seen message identifiers are remembered to suppress retransmitted duplicates. This does not block every identical question indefinitely.</p></div>
+            <div class="field "><label>Log level
+              <select id="log_level" aria-describedby="help-log_level">
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>
                 <option value="ERROR">ERROR</option>
                 <option value="CRITICAL">CRITICAL</option>
               </select>
-            </label>
-            <label class="span-three">Radio prompt template
-              <textarea id="radio_prompt_template" rows="8" spellcheck="false" placeholder="Template must include {question}"></textarea>
+            </label><button type="button" class="help-button" data-field="log_level" aria-label="Help: log level" aria-expanded="false" aria-controls="help-log_level">?</button><p class="field-help" id="help-log_level" hidden>Default: INFO. Controls plugin log verbosity, from detailed DEBUG diagnostics to CRITICAL only. DEBUG can expose operational metadata; use it temporarily when troubleshooting.</p></div>
+            <div class="field span-three"><label class="span-three">Radio prompt template
+              <textarea id="radio_prompt_template" aria-describedby="help-radio_prompt_template" rows="8" spellcheck="false" placeholder="Template must include {question}"></textarea>
               <small>Required. Must include <code>{question}</code> so the incoming user message can be injected.</small>
-            </label>
+            </label><button type="button" class="help-button" data-field="radio_prompt_template" aria-label="Help: radio prompt template" aria-expanded="false" aria-controls="help-radio_prompt_template">?</button><p class="field-help" id="help-radio_prompt_template" hidden>Default: concise radio-answer instructions. Use {question} to insert the received question. Only that substitution is allowed; use double braces for literal braces. The template must remain valid even when the radio prompt is disabled.</p></div>
           </div>
         </section>
 
@@ -125,15 +132,16 @@
             <span class="section-number">03</span>
           </div>
           <div class="form-grid three">
-            <label>Max reply chunks
-              <input id="max_reply_chunks" type="number" min="1" max="32">
-            </label>
-            <label>Max chunk bytes
-              <input id="max_chunk_bytes" type="number" min="64" max="1024">
-            </label>
-            <label>Max prompt bytes
-              <input id="max_prompt_bytes" type="number" min="128" max="8192">
-            </label>
+            <div class="field "><label>Reply delay (seconds)<input id="reply_chunk_delay_seconds" aria-describedby="help-reply_chunk_delay_seconds" type="number" min="0" max="60" step="any" required></label><button type="button" class="help-button" data-field="reply_chunk_delay_seconds" aria-label="Help: reply chunk delay seconds" aria-expanded="false" aria-controls="help-reply_chunk_delay_seconds">?</button><p class="field-help" id="help-reply_chunk_delay_seconds" hidden>Default: 2 seconds; range: 0–60. Global minimum spacing between outgoing sends, shared by concurrent answers and error replies. Zero disables pacing. Companion acceptance is not confirmation of RF delivery.</p></div>
+            <div class="field "><label>Max reply chunks
+              <input id="max_reply_chunks" aria-describedby="help-max_reply_chunks" type="number" min="1" max="32">
+            </label><button type="button" class="help-button" data-field="max_reply_chunks" aria-label="Help: max reply chunks" aria-expanded="false" aria-controls="help-max_reply_chunks">?</button><p class="field-help" id="help-max_reply_chunks" hidden>Default: 4. Maximum chunks in one answer. Longer answers are truncated to this budget. More chunks use more airtime; failed or unconfirmed Companion acceptance stops the remaining answer.</p></div>
+            <div class="field "><label>Max chunk bytes
+              <input id="max_chunk_bytes" aria-describedby="help-max_chunk_bytes" type="number" min="40" max="1024">
+            </label><button type="button" class="help-button" data-field="max_chunk_bytes" aria-label="Help: max chunk bytes" aria-expanded="false" aria-controls="help-max_chunk_bytes">?</button><p class="field-help" id="help-max_chunk_bytes" hidden>Default: 80 UTF-8 bytes per chunk; minimum: 40. Includes chunk numbering. Non-ASCII characters may use multiple bytes. Smaller chunks suit constrained links; a larger value does not increase the radio protocol capacity.</p></div>
+            <div class="field "><label>Max prompt bytes
+              <input id="max_prompt_bytes" aria-describedby="help-max_prompt_bytes" type="number" min="128" max="8192">
+            </label><button type="button" class="help-button" data-field="max_prompt_bytes" aria-label="Help: max prompt bytes" aria-expanded="false" aria-controls="help-max_prompt_bytes">?</button><p class="field-help" id="help-max_prompt_bytes" hidden>Default: 1000 UTF-8 bytes. Maximum incoming question size before the radio prompt template is added. Oversized questions receive a short error instead of being sent to NOMAD.</p></div>
           </div>
         </section>
       </form>

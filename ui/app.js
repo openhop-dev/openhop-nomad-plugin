@@ -12,10 +12,16 @@
     nomad_collection: null,
     nomad_timeout_seconds: 120,
     one_shot: true,
-    max_concurrent_requests: 2,
+    max_concurrent_requests: 1,
     busy_wait_seconds: 5,
+    max_pending_requests: 1,
+    max_requests_per_sender: 2,
+    max_requests_global: 4,
+    rate_limit_window_seconds: 60,
+    allowed_sender_prefixes: [],
+    reply_chunk_delay_seconds: 2,
     max_reply_chunks: 4,
-    max_chunk_bytes: 145,
+    max_chunk_bytes: 80,
     max_prompt_bytes: 1000,
     radio_prompt_enabled: true,
     radio_prompt_template:
@@ -36,7 +42,7 @@
     "nomad_timeout_seconds", "one_shot", "max_concurrent_requests", "busy_wait_seconds",
     "max_reply_chunks", "max_chunk_bytes", "max_prompt_bytes", "radio_prompt_enabled",
     "radio_prompt_template",
-    "duplicate_ttl_seconds", "log_level"
+    "duplicate_ttl_seconds", "log_level", "max_pending_requests", "max_requests_per_sender", "max_requests_global", "rate_limit_window_seconds", "allowed_sender_prefixes", "reply_chunk_delay_seconds"
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -94,11 +100,7 @@
   }
 
   function supportedConfig(config) {
-    const out = {};
-    Object.keys(defaults).forEach((key) => {
-      if (Object.prototype.hasOwnProperty.call(config, key)) out[key] = config[key];
-    });
-    return out;
+    return stripRuntime(config);
   }
 
   async function fetchConfig() {
@@ -124,7 +126,8 @@
   function setValue(id, value) {
     const el = $(id);
     if (!el) return;
-    if (el.type === "checkbox") el.checked = Boolean(value);
+    if (id === "allowed_sender_prefixes") el.value = Array.isArray(value) ? value.join("\n") : (value || "");
+    else if (el.type === "checkbox") el.checked = Boolean(value);
     else el.value = value === null || value === undefined ? "" : String(value);
   }
 
@@ -172,7 +175,7 @@
     if (maxConcurrent < 1 || maxConcurrent > 32) throw new Error("Max concurrent requests must be between 1 and 32.");
     if (busyWait < 0 || busyWait > 120) throw new Error("Busy wait must be between 0 and 120 seconds.");
     if (maxReplyChunks < 1 || maxReplyChunks > 32) throw new Error("Max reply chunks must be between 1 and 32.");
-    if (maxChunkBytes < 64 || maxChunkBytes > 1024) throw new Error("Max chunk bytes must be between 64 and 1024.");
+    if (maxChunkBytes < 40 || maxChunkBytes > 1024) throw new Error("Max chunk bytes must be between 40 and 1024.");
     if (maxPromptBytes < 128 || maxPromptBytes > 8192) throw new Error("Max prompt bytes must be between 128 and 8192.");
     if (duplicateTtl < 60 || duplicateTtl > 86400) throw new Error("Duplicate TTL must be between 60 and 86400 seconds.");
 
@@ -186,6 +189,18 @@
       throw new Error("Radio prompt template must include {question}.");
     }
 
+    const maxPending = valueNumber("max_pending_requests");
+    const perSender = valueNumber("max_requests_per_sender");
+    const globalLimit = valueNumber("max_requests_global");
+    const windowSeconds = valueNumber("rate_limit_window_seconds");
+    const delay = valueNumber("reply_chunk_delay_seconds");
+    if (!Number.isInteger(maxPending) || maxPending < maxConcurrent) throw new Error("Max pending requests must be an integer at least as large as max concurrent requests.");
+    if (!Number.isInteger(perSender) || !Number.isInteger(globalLimit) || perSender < 1 || globalLimit < perSender) throw new Error("Request limits must be positive integers; global must be at least per sender.");
+    if (windowSeconds <= 0 || delay < 0 || delay > 60) throw new Error("Rate window must be positive and reply delay must be between 0 and 60 seconds.");
+    const prefixes = $("allowed_sender_prefixes").value.split(/[\n,]/).map(v => v.trim()).filter(Boolean);
+    if (prefixes.some(v => !/^[0-9a-fA-F]{12}$/.test(v))) throw new Error("Each sender prefix must be exactly 12 hexadecimal characters.");
+    const remainingTemplate = radioPromptTemplate.replaceAll("{{", "").replaceAll("}}", "").replaceAll("{question}", "");
+    if (/[{}]/.test(remainingTemplate)) throw new Error("Only {question} substitution and doubled literal braces are allowed.");
     const collectionRaw = $("nomad_collection").value.trim();
 
     return {
@@ -196,7 +211,13 @@
       nomad_model: nomadModel,
       nomad_collection: collectionRaw ? collectionRaw : null,
       nomad_timeout_seconds: timeout,
-      one_shot: $("one_shot").checked,
+      one_shot: true,
+      max_pending_requests: maxPending,
+      max_requests_per_sender: perSender,
+      max_requests_global: globalLimit,
+      rate_limit_window_seconds: windowSeconds,
+      allowed_sender_prefixes: prefixes,
+      reply_chunk_delay_seconds: delay,
       max_concurrent_requests: maxConcurrent,
       busy_wait_seconds: busyWait,
       max_reply_chunks: maxReplyChunks,
@@ -268,5 +289,24 @@
     }
   });
 
+  const helpButtons = [...document.querySelectorAll(".help-button")];
+  function closeHelp() {
+    helpButtons.forEach(button => {
+      button.setAttribute("aria-expanded", "false");
+      $(button.getAttribute("aria-controls")).hidden = true;
+    });
+  }
+  helpButtons.forEach(button => button.addEventListener("click", () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    closeHelp();
+    button.setAttribute("aria-expanded", String(open));
+    $(button.getAttribute("aria-controls")).hidden = !open;
+  }));
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") closeHelp();
+  });
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".help-button, .field-help")) closeHelp();
+  });
   loadConfig(true);
 })();

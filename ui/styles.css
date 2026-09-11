@@ -1,14 +1,16 @@
 :root {
   color-scheme: light dark;
-  --bg: #f3f5f8;
+  --bg: #f6f8ff;
   --panel: rgba(255,255,255,.94);
   --panel-strong: #fff;
-  --text: #17202a;
-  --muted: #687384;
-  --line: #dfe4ea;
-  --line-strong: #cbd3dc;
-  --accent: #e6522c;
-  --accent-soft: #fff0eb;
+  --text: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --accent: #3b82f6;
+  --secondary: #8b5cf6;
+  --brand-gradient: linear-gradient(135deg, var(--accent), var(--secondary));
+  --accent-soft: #dbeafe;
   --good: #178b55;
   --good-soft: #e9f8f0;
   --warn: #b16b00;
@@ -24,14 +26,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1319;
-    --panel: rgba(24,30,39,.96);
-    --panel-strong: #181e27;
-    --text: #f3f5f7;
-    --muted: #9aa5b4;
-    --line: #2b3441;
-    --line-strong: #3a4554;
-    --accent-soft: #3a211b;
+    --accent: #60a5fa;
+    --secondary: #a855f7;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --bg: #05070d;
+    --panel: #0d121f;
+    --panel-strong: #0d121f;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --line: #1f2937;
+    --line-strong: #374151;
+    --accent-soft: #1e3a8a;
     --good-soft: #123026;
     --warn-soft: #352c15;
     --bad-soft: #391e22;
@@ -50,7 +57,7 @@ code, pre { font-family: var(--mono); }
 .topbar { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; align-items: center; gap: 13px; }
 .brand h1 { margin: 0; font-size: 1.5rem; letter-spacing: -.03em; }
-.brand-mark { width: 38px; height: 38px; border-radius: 12px; background: var(--accent); display: flex; align-items: end; justify-content: center; gap: 3px; padding: 9px; box-shadow: 0 7px 18px rgba(230,82,44,.24); }
+.brand-mark { width: 38px; height: 38px; border-radius: 12px; background: var(--brand-gradient); display: flex; align-items: end; justify-content: center; gap: 3px; padding: 9px; box-shadow: 0 7px 18px rgba(59,130,246,.24); }
 .brand-mark span { display: block; width: 4px; border-radius: 2px 2px 0 0; background: white; }
 .brand-mark span:nth-child(1) { height: 8px; }
 .brand-mark span:nth-child(2) { height: 16px; }
@@ -110,7 +117,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 
 .button { appearance: none; cursor: pointer; border: 1px solid var(--line-strong); background: var(--panel-strong); border-radius: 10px; font-weight: 700; padding: 10px 14px; }
 .button:hover { border-color: var(--accent); }
-.button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.button.primary { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 .button.ghost { background: transparent; border-color: var(--line); color: var(--muted); }
 .button:disabled { cursor: wait; opacity: .55; }
 
@@ -118,6 +125,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   .hero { grid-template-columns: 1fr; }
   .quick-facts { min-width: 0; }
   .form-grid.three { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .span-three { grid-column: 1 / -1; }
 }
 
 @media (max-width: 650px) {
@@ -132,3 +140,18 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   .settings-actions { width: 100%; }
   .settings-actions .button { flex: 1; }
 }
+
+/* Palette and config-card treatment follow openHop RepeaterUI base.css. */
+.nomad-logo { width: 132px; max-width: 100%; height: auto; display: block; margin-bottom: 16px; }
+.hero { border-top: 3px solid var(--accent); }
+.field { position: relative; min-width: 0; padding-top: 3px; }
+.field > label { padding-right: 48px; }
+.field > label input, .field > label select, .field > label textarea { width: calc(100% + 48px); margin-top: 20px; }
+.field .check-card { min-height: 48px; padding-right: 52px; }
+.field .check-card input { width: 16px; flex-shrink: 0; margin-top: 0; }
+.help-button { position: absolute; right: 0; top: 0; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel-strong); color: var(--text); cursor: pointer; font-weight: 700; }
+.help-button:hover, .help-button[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.field-help { margin: 10px 0 0; padding: 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 6px; color: var(--text); font-size: .82rem; line-height: 1.55; }
+[hidden] { display: none !important; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 650px) { .topbar { flex-wrap: wrap; gap: 12px; } .brand { gap: 8px; } .brand h1 { font-size: 1.25rem; } }
