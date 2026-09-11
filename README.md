@@ -148,8 +148,9 @@ built-in defaults
     < environment variables
 ```
 
-An empty `allowed_sender_prefixes` list denies every MeshCore sender. Set it to the exact
-12-character sender prefixes that may use NOMAD. `one_shot` defaults to `true`. The default
+An empty `allowed_sender_prefixes` list permits anyone who can DM this Companion.
+A nonempty list permits only the listed exact 12-character hexadecimal sender prefixes.
+Blank entries are ignored; a list containing only blanks also permits everyone. `one_shot` defaults to `true`. The default
 limits permit one active request, two requests per sender per minute, and four requests
 globally per minute.
 Rejected overload and authorization traffic is dropped without an RF reply. NOMAD HTTP
@@ -208,13 +209,43 @@ Important environment overrides include:
 
 `NOMAD_URL` and `NOMAD_MODEL` must be provided by `config.json` or environment variables.
 
+## Manual Companion adverts (local test build)
+
+`0.1.4+test.1` is a distinguishable test artifact, not a published release.
+The buttons use the running NOMAD plugin's existing Companion TCP connection,
+not Repeater advert endpoints. Core 1.1.1 supports command 7 with flag 0
+(zero-hop) or 1 (flood), replying OK or ERR. Acceptance is not RF delivery.
+The command shares the client's command lock; uncertain acceptance closes that
+connection and is never automatically retried.
+
+The existing authenticated plugin settings API writes a fixed `advert_request`
+envelope with `restart: false`. The plugin accepts only `zero-hop` and `flood`;
+there is no shell command or additional HTTP/TCP listener. The existing
+`/api/plugins/runtime?id=openhop.nomad` route reads the plugin-owned
+`runtime.json` acknowledgement and one-use random challenge. Challenges expire
+after 30 seconds, are consumed before sending, and are replaced on process start.
+Thus saved config, reloads, restarts, and repeated submissions do not replay an
+advert. Normal settings saves remove the transient envelope. The plugin never
+writes config.json, so runtime acknowledgements do not overwrite settings.
+
+This requires the manager's existing settings and runtime routes plus
+`OPENHOP_PLUGIN_DATA`; controls stay disabled without a fresh connected runtime.
+Only one operator should edit settings or submit an action at a time: the existing
+settings API replaces the whole JSON document and has no compare-and-swap or
+transactional action queue. The UI re-reads settings immediately before submitting
+and preserves unknown keys, but concurrent editors can still overwrite one another.
+A lost/replaced request expires; it is not retried. A missing acknowledgement means
+unknown acceptance, not proof that nothing was transmitted. No RF test or deployment
+is implied by building this wheel.
+
 ## Upgrading from v0.1.2
 
 Install with dependencies (including the new `aiohttp` and `aiodns` requirements). Python
 3.10 and newer remain supported. The `openhop-core==1.1.1` pin is unchanged.
 Before restarting, set `allowed_sender_prefixes` to the permitted 12-hex-character sender
 prefixes and choose stateless (`one_shot: true`) or bounded RAM memory (`false`). An empty
-allowlist denies everyone and logs a startup warning; there is no public/open mode.
+allowlist permits everyone who can DM this Companion and logs a startup warning;
+rate limits still apply. This changes the earlier deny-empty policy.
 Old persistent-session maps are untouched and no longer used. Existing hostname/IP URLs remain usable subject
 to the origin rules above. Review the conservative request limits and global reply pacing;
 these intentionally restrict traffic compared with earlier versions. No automatic config
@@ -234,7 +265,7 @@ network described above.
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3",
+  "version": "0.1.4+test.1",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -288,7 +319,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.4+test.1-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

@@ -86,6 +86,74 @@
     return response;
   }
 
+  let advertBusy = false;
+  function advertButtons(disabled) {
+    $("advert-zero").disabled = disabled;
+    $("advert-flood").disabled = disabled;
+  }
+  async function advertRuntime() {
+    const response = await apiFetch(`/api/plugins/runtime?id=${encodeURIComponent(PLUGIN_ID)}`);
+    if (!response.ok) throw new Error("Advert controls unavailable: running plugin runtime API is required.");
+    const state = (await response.json()).runtime?.advert;
+    if (!state || !state.connected || !Number.isFinite(state.updated_at) || typeof state.token !== "string" || !/^[a-f0-9]{64}$/.test(state.token) || Math.abs(Date.now() / 1000 - state.updated_at) > (state.result?.status === "pending" ? 20 : 5)) {
+      throw new Error("Advert controls unavailable: plugin stopped, disconnected, or runtime stale.");
+    }
+    return state;
+  }
+  async function refreshAdverts() {
+    if (advertBusy) return;
+    try {
+      const state = await advertRuntime();
+      if (advertBusy) return;
+      advertButtons(state.result?.status === "pending");
+      if (!$("advert-status").dataset.result) $("advert-status").textContent = `Running Companion: ${state.endpoint}`;
+    } catch (error) {
+      if (advertBusy) return;
+      advertButtons(true);
+      if (!$("advert-status").dataset.result) $("advert-status").textContent = error.message;
+    }
+  }
+  async function sendAdvert(mode) {
+    if (advertBusy) return;
+    advertBusy = true;
+    advertButtons(true);
+    $("advert-status").dataset.result = "true";
+    $("advert-status").textContent = "Submitting manual advert…";
+    try {
+      const config = await fetchConfig();
+      const state = await advertRuntime();
+      if (state.result?.status === "pending") throw new Error("Another advert is pending; wait for its result.");
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      const response = await apiFetch(API, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: PLUGIN_ID, restart: false,
+          config: { ...stripRuntime(config), advert_request: { id, mode, token: state.token } } })
+      });
+      if (!response.ok) throw new Error("Advert submission not confirmed. Do not automatically retry.");
+      $("advert-status").textContent = "Waiting for Companion acceptance…";
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const result = (await advertRuntime()).result;
+        if (result?.id !== id || result.status === "pending") continue;
+        $("advert-status").textContent = result.status === "accepted"
+          ? `${mode} advert accepted by Companion. RF delivery is not confirmed.`
+          : `Advert ${result.status}. RF delivery is not confirmed; do not automatically retry.`;
+        return;
+      }
+      throw new Error("Advert acceptance unknown or request expired. Do not automatically retry.");
+    } catch (error) {
+      $("advert-status").textContent = `${error.message} RF delivery is not confirmed.`;
+    } finally {
+      advertBusy = false;
+      await refreshAdverts();
+    }
+  }
+  $("advert-zero").addEventListener("click", () => sendAdvert("zero-hop"));
+  $("advert-flood").addEventListener("click", () => sendAdvert("flood"));
+  setInterval(refreshAdverts, 2000);
+  refreshAdverts();
+
   function configFromResponse(payload) {
     if (payload && typeof payload === "object" && payload.config && typeof payload.config === "object") {
       return payload.config;
@@ -96,6 +164,7 @@
   function stripRuntime(config) {
     const clean = { ...config };
     delete clean._runtime;
+    delete clean.advert_request;
     return clean;
   }
 

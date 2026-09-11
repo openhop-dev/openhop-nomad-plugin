@@ -311,17 +311,19 @@ async def test_dispatch_silently_enforces_global_rate_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_sender_allowlist_rejects_all_requests() -> None:
-    settings = replace(_settings(), allowed_sender_prefixes=())
+async def test_empty_sender_allowlist_allows_distinct_senders() -> None:
+    settings = replace(
+        _settings(), allowed_sender_prefixes=(), max_pending_requests=4, reply_chunk_delay_seconds=0
+    )
     mesh = FakeMeshCore()
     nomad = SlowNomad(delay=0)
     service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
 
-    await service._dispatch_message(_msg("blocked", ts=499))
-    await asyncio.sleep(0)
-
-    assert nomad.calls == 0
-    assert mesh.sent == []
+    for sender in (b"abcdef", b"ghijkl"):
+        await service._dispatch_message(_msg("allowed", ts=499, sender=sender))
+    await asyncio.gather(*list(service._inflight))
+    assert nomad.calls == 2
+    assert len(mesh.sent) == 2
 
 
 @pytest.mark.asyncio
@@ -388,16 +390,21 @@ async def test_reset_command_clears_memory() -> None:
 
 @pytest.mark.asyncio
 async def test_reset_obeys_global_concurrency_and_dispatch_admission():
-    settings = replace(_settings(), one_shot=False, busy_wait_seconds=0,
-                       reply_chunk_delay_seconds=0, max_concurrent_requests=1)
+    settings = replace(
+        _settings(),
+        one_shot=False,
+        busy_wait_seconds=0,
+        reply_chunk_delay_seconds=0,
+        max_concurrent_requests=1,
+    )
     nomad, mesh = SlowNomad(0), FakeMeshCore()
     service = BridgeService(settings, mesh, nomad)
     await service._semaphore.acquire()
-    await service._handle_message(_msg('/new', ts=999))
+    await service._handle_message(_msg("/new", ts=999))
     assert nomad.resets == 0
     assert mesh.sent[-1][1] == NOMAD_BUSY_MESSAGE
     service._semaphore.release()
-    await service._dispatch_message(_msg('/reset', sender=b'abcdef', ts=1000))
+    await service._dispatch_message(_msg("/reset", sender=b"abcdef", ts=1000))
     assert not service._inflight
     assert nomad.resets == 0
 
@@ -424,17 +431,24 @@ async def _long_answer(*args):
 
 
 @pytest.mark.asyncio
-async def test_empty_allowlist_warns_at_startup(caplog):
+async def test_empty_allowlist_warns_at_startup(caplog, tmp_path, monkeypatch):
     mesh = FakeMeshCore()
 
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+    mesh.connected = False
+
     async def run(*args):
-        return None
+        await asyncio.sleep(0.02)
+        assert (tmp_path / "runtime.json").exists()
 
     mesh.run = run
     service = BridgeService(replace(_settings(), allowed_sender_prefixes=()), mesh, SlowNomad(0))
     service._register_signals = lambda: None
     await service.run()
-    assert "allowed_sender_prefixes is empty; all senders are denied" in caplog.text
+    assert (
+        "allowed_sender_prefixes is empty; anyone who can DM this Companion is allowed; rate limits still apply"
+        in caplog.text
+    )
 
 
 @pytest.mark.asyncio

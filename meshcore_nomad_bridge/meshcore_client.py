@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from openhop_core.companion.constants import (
     CMD_APP_START,
     CMD_DEVICE_QUERY,
+    CMD_SEND_SELF_ADVERT,
     CMD_SEND_TXT_MSG,
     CMD_SYNC_NEXT_MESSAGE,
     FRAME_INBOUND_PREFIX,
@@ -24,6 +25,7 @@ from openhop_core.companion.constants import (
     RESP_CODE_CURR_TIME,
     RESP_CODE_ERR,
     RESP_CODE_NO_MORE_MESSAGES,
+    RESP_CODE_OK,
     RESP_CODE_SENT,
     TXT_TYPE_PLAIN,
 )
@@ -137,6 +139,59 @@ class MeshCoreClient:
                 await asyncio.wait_for(stop_event.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
+
+    @property
+    def connected(self) -> bool:
+        return self._connected.is_set()
+
+    async def send_advert(self, mode: str, *, may_send: Callable[[], bool] | None = None) -> str:
+        """One explicit advert on this connection. Never retry uncertain acceptance."""
+        if mode not in ("zero-hop", "flood"):
+            raise ValueError("mode must be zero-hop or flood")
+        if not self.connected:
+            return "disconnected"
+        try:
+            await asyncio.wait_for(self._command_lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            return "busy"
+        try:
+            if not self.connected:
+                return "disconnected"
+            try:
+
+                async def guarded_send():
+                    # Revalidate inside the scheduled coroutine, under the lock,
+                    # immediately before the socket write (no intervening await).
+                    if may_send is not None and not may_send():
+                        return None
+                    return await self._send_command_expect(
+                        bytes([CMD_SEND_SELF_ADVERT, int(mode == "flood")]),
+                        expected_codes={RESP_CODE_OK, RESP_CODE_ERR},
+                        command_label="send_advert",
+                    )
+
+                frame = await asyncio.wait_for(guarded_send(), timeout=10)
+                if frame is None:
+                    return "expired"
+                if frame[0] == RESP_CODE_OK:
+                    return "accepted"
+                if frame[0] == RESP_CODE_ERR:
+                    return "rejected"
+            except asyncio.CancelledError:
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                raise
+            except Exception:
+                logger.exception("Advert command failed; acceptance unknown")
+            # No transaction IDs: discard the uncertain connection so a late OK
+            # cannot acknowledge a subsequent action. The run loop reconnects.
+            self._connected.clear()
+            if self._writer is not None:
+                self._writer.close()
+            return "unknown"
+        finally:
+            self._command_lock.release()
 
     async def send_text(self, recipient_prefix: bytes, text: str) -> bool:
         if len(recipient_prefix) < 6:

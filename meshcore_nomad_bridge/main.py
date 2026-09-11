@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import signal
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
+from .advert_control import AdvertControl
 from .config import ConfigError, Settings
 from .meshcore_client import IncomingMessage, MeshCoreClient
 from .nomad_client import NomadClient, NomadUnavailable
@@ -101,17 +104,37 @@ class BridgeService:
 
     async def run(self) -> None:
         if not self._settings.allowed_sender_prefixes:
-            logger.warning("allowed_sender_prefixes is empty; all senders are denied")
+            logger.warning(
+                "allowed_sender_prefixes is empty; anyone who can DM this Companion is allowed; rate limits still apply"
+            )
         self._register_signals()
-        await self._meshcore.run(self._dispatch_message, self._stop_event)
-        await self._shutdown()
+        data_dir = os.getenv("OPENHOP_PLUGIN_DATA", "").strip()
+        control_task = None
+        if data_dir:
+            control = AdvertControl(
+                Path(data_dir),
+                self._meshcore,
+                endpoint=f"{self._settings.meshcore_host}:{self._settings.meshcore_port}",
+            )
+            control_task = asyncio.create_task(control.run(self._stop_event))
+        try:
+            await self._meshcore.run(self._dispatch_message, self._stop_event)
+        finally:
+            self._stop_event.set()
+            if control_task is not None:
+                control_task.cancel()
+                await asyncio.gather(control_task, return_exceptions=True)
+            await self._shutdown()
 
     async def _dispatch_message(self, message: IncomingMessage) -> None:
         if message.txt_type != 0 or not message.text.strip():
             return
 
         sender_id = message.sender_prefix.hex()
-        if sender_id not in self._settings.allowed_sender_prefixes:
+        if (
+            self._settings.allowed_sender_prefixes
+            and sender_id not in self._settings.allowed_sender_prefixes
+        ):
             logger.debug("Dropping message from a sender that is not allowed")
             return
 

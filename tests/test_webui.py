@@ -42,6 +42,8 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                     posts.append(payload)
                     config = payload["config"]
                 return request.fulfill(json={"config": config})
+            if "/api/plugins/runtime" in url:
+                return request.fulfill(status=404, json={})
             relative = url.split("/plugins/openhop.nomad/", 1)[-1] or "index.html"
             file = ROOT / "ui" / relative
             request.fulfill(path=str(file))
