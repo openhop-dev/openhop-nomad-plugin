@@ -43,6 +43,47 @@ def _write_config(path: Path, **values: object) -> None:
     (path / "config.json").write_text(json.dumps(values), encoding="utf-8")
 
 
+@pytest.mark.parametrize("source", ["config.default.json", "openhop-plugin.json"])
+def test_packaged_defaults_use_nomad_docker_endpoint(monkeypatch, tmp_path, source):
+    _clean_env(monkeypatch)
+    root = Path(__file__).resolve().parents[1]
+    defaults = json.loads((root / source).read_text(encoding="utf-8"))
+    if source == "openhop-plugin.json":
+        defaults = defaults["config"]["defaults"]
+    _write_config(tmp_path, **defaults)
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+
+    settings = Settings.from_env()
+
+    assert settings.nomad_url == "http://nomad_admin:8080"
+    assert (settings.meshcore_host, settings.meshcore_port) == ("127.0.0.1", 5001)
+
+
+@pytest.mark.parametrize("source", ["ui/app.js", "ui/index.html"])
+def test_ui_endpoint_defaults_match_docker_install(source):
+    root = Path(__file__).resolve().parents[1]
+    content = (root / source).read_text(encoding="utf-8")
+    assert "http://nomad_admin:8080" in content
+    assert "http://127.0.0.1:8080" not in content
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8080", "https://remote.example:8443"])
+@pytest.mark.parametrize("override", [None, "http://other.example:8080"])
+def test_existing_endpoint_is_preserved_without_rewriting_config(
+    monkeypatch, tmp_path, url, override
+):
+    _clean_env(monkeypatch)
+    _write_config(tmp_path, nomad_url=url, nomad_model="existing-model")
+    config_path = tmp_path / "config.json"
+    before = config_path.read_bytes()
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+    if override:
+        monkeypatch.setenv("NOMAD_URL", override)
+
+    assert Settings.from_env().nomad_url == (override or url)
+    assert config_path.read_bytes() == before
+
+
 def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _clean_env(monkeypatch)
     data_dir = tmp_path / "plugin-data"

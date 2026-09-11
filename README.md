@@ -56,6 +56,26 @@ for configuration compatibility.
 
 When `OPENHOP_PLUGIN_DATA` is not set, existing standalone behaviour is preserved and the session map defaults to `./data/nomad_sessions.json`.
 
+## NOMAD Docker networking
+
+New plugin installations default to `http://nomad_admin:8080`. This is the NOMAD
+container's DNS name and internal HTTP port, not the Repeater container's loopback.
+The openHop Repeater container (which runs the plugin) and `nomad_admin` **must share
+a user-defined Docker network** with the `nomad_admin` name/alias available there.
+Docker's default bridge network does not provide this name-resolution contract.
+
+Persist both containers' network attachments in their Compose/deployment configuration
+so they survive container recreation and upgrades. For separate Compose projects, use
+the same externally managed user-defined network in both configurations. A one-off
+`docker network connect` is not a durable replacement for that configuration.
+
+For standalone or remote deployments where `nomad_admin` is not resolvable, explicitly
+set `nomad_url` in `config.json`, or override it with `NOMAD_URL`, to a reachable origin
+such as `http://192.0.2.10:8080` or `https://nomad.example.org`. Use
+`http://127.0.0.1:8080` only when NOMAD actually runs in the plugin's own network
+namespace (for example standalone processes on the same host).
+The Companion default remains `127.0.0.1:5001`; this change affects only NOMAD HTTP.
+
 ## config.json
 
 With `OPENHOP_PLUGIN_DATA` set, the plugin reads `$OPENHOP_PLUGIN_DATA/config.json` if it exists.
@@ -64,7 +84,7 @@ Minimum configuration:
 
 ```json
 {
-  "nomad_url": "http://192.168.0.170:8080",
+  "nomad_url": "http://nomad_admin:8080",
   "nomad_model": "qwen2.5:3b-instruct",
   "allowed_sender_prefixes": ["001122334455"]
 }
@@ -76,7 +96,7 @@ Typical configuration:
 {
   "meshcore_host": "127.0.0.1",
   "meshcore_port": 5001,
-  "nomad_url": "http://192.168.0.170:8080",
+  "nomad_url": "http://nomad_admin:8080",
   "nomad_model": "qwen2.5:3b-instruct",
   "nomad_collection": null,
   "nomad_timeout_seconds": 120,
@@ -177,7 +197,12 @@ startup warning; there is no public/open mode. Old persistent-session maps are n
 but persistent mode is rejected at startup. Existing hostname/IP URLs remain usable subject
 to the origin rules above. Review the conservative request limits and global reply pacing;
 these intentionally restrict traffic compared with earlier versions. No automatic config
-migration or deployment is performed.
+migration or deployment is performed. The new Docker URL is an installation default,
+not an upgrade migration: preserve existing `config.json` files and environment
+overrides; do not replace them with `config.default.json` during upgrades. Existing
+explicit URLs, including loopback, remain unchanged. If an older loopback setting
+is wrong for your Docker setup, change it deliberately after configuring the shared
+network described above.
 
 ## Plugin manifest
 
@@ -204,7 +229,8 @@ The plugin remains a lightweight service package and does not add a custom permi
 
 ## Standalone development
 
-The plugin remains runnable without the plugin manager:
+The plugin remains runnable without the plugin manager. This example assumes NOMAD
+runs on the same host/network namespace; otherwise set a reachable remote URL:
 
 ```bash
 python3 -m venv .venv
