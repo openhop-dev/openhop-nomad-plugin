@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3",
+  "version": "0.1.3+test.1",
   "description": "Bridges an openHop Repeater Companion identity to Project N.O.M.A.D.",
   "runtime": {
     "type": "python",
