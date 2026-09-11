@@ -1,0 +1,89 @@
+name: Propose NOMAD catalogue update
+
+on:
+  workflow_run:
+    workflows: [Build Wheel]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing final release (vMAJOR.MINOR.PATCH); run on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# One publisher across all versions prevents duplicate PR races. Per-version
+# branches still allow independent catalogue review and fail-closed leases.
+concurrency:
+  group: nomad-catalogue-proposals
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    if: >-
+      github.repository == 'openhop-dev/openhop-nomad-plugin' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        contains(fromJSON('["push","release","workflow_dispatch"]'), github.event.workflow_run.event)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted main automation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Checkout current catalogue main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openhop-dev/openhop-plugin-catalogue
+          ref: main
+          path: plugin-catalogue
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install validation dependencies
+        run: |
+          python3 -m venv .automation-venv
+          .automation-venv/bin/pip install -r scripts/automation-requirements.txt
+      - name: Verify public release and prepare only four fields
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          .automation-venv/bin/python scripts/release_automation.py prepare \
+            --catalogue plugin-catalogue --output proposal
+      - name: Validate destination and run its full tests without write credentials
+        run: |
+          (cd plugin-catalogue && ../.automation-venv/bin/python -m pytest tests)
+          cp proposal/catalogue.json plugin-catalogue/catalogue.json
+          .automation-venv/bin/python plugin-catalogue/scripts/validate_catalogue.py
+          (cd plugin-catalogue && ../.automation-venv/bin/python -m pytest tests)
+          git -C plugin-catalogue restore catalogue.json
+      # No catalogue write token exists until every destination-code step passed.
+      - name: Mint catalogue-only publisher token
+        if: steps.prepare.outputs.changed == 'true'
+        id: catalogue-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.OPENHOP_CATALOGUE_APP_ID }}
+          private-key: ${{ secrets.OPENHOP_CATALOGUE_APP_PRIVATE_KEY }}
+          owner: openhop-dev
+          repositories: openhop-plugin-catalogue
+          permission-contents: write
+          permission-pull-requests: write
+          permission-metadata: read
+          skip-token-revoke: false
+      - name: Publish branch with explicit lease and create or update ready PR
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.catalogue-token.outputs.token }}
+          APP_SLUG: ${{ steps.catalogue-token.outputs.app-slug }}
+        run: python3 -I scripts/publish_catalogue.py --catalogue plugin-catalogue --proposal proposal

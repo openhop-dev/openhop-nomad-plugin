@@ -165,6 +165,10 @@ meshcore-nomad-bridge
 python -m pytest
 ```
 
+## Release automation
+
+See [release and catalogue automation](docs/release-automation.md) for immutable publication, manual existing-release retries, credential boundaries, read-only proposal rehearsal, and the outstanding catalogue test gate. Catalogue-owned policy—not this producer—decides automatic merging.
+
 ## Build wheel
 
 Build a distributable wheel from the plugin root:

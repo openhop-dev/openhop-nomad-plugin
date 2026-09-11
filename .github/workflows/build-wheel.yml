@@ -1,78 +1,116 @@
 name: Build Wheel
+run-name: Build Wheel ${{ inputs.release_tag || github.event.release.tag_name || github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Tag to publish assets to (example: v0.1.2)"
+        description: Existing canonical source tag to publish or verify (run on main)
         required: true
         type: string
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
   release:
     types: [published]
 
 permissions:
-  contents: write
+  contents: read
+
+# All three event types serialize on the same version; retries verify existing
+# public bytes rather than rebuilding. GitHub may coalesce pending retries.
+concurrency:
+  group: nomad-release-${{ inputs.release_tag || github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build-wheel:
+    if: >-
+      github.repository == 'openhop-dev/openhop-nomad-plugin' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
+    outputs:
+      state: ${{ steps.inspect.outputs.state }}
+      sha: ${{ steps.inspect.outputs.sha }}
+      tag: ${{ steps.inspect.outputs.tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - name: Checkout trusted main automation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Checkout catalogue validation policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openhop-dev/openhop-plugin-catalogue
+          ref: main
+          path: plugin-catalogue
+          persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
-
-      - name: Install build tooling
+          python-version: '3.12'
+      - name: Install validation tooling
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-
-      - name: Build wheel
-        run: python -m build --wheel
-
-      - name: Resolve release metadata
-        shell: bash
+          python3 -m venv .automation-venv
+          .automation-venv/bin/pip install -r scripts/automation-requirements.txt
+      - name: Inspect immutable source and existing release before building
+        id: inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || github.ref_name }}
         run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
-          else
-            echo "RELEASE_TAG=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
-          fi
-
-      - name: Create zipped wheel bundle
-        shell: bash
-        run: |
-          mkdir -p release-assets
-          zip_name="openhop-nomad-plugin-${RELEASE_TAG}-wheel.zip"
-          (
-            cd dist
-            zip -j "../release-assets/${zip_name}" *.whl
-          )
-          echo "WHEEL_ZIP=release-assets/${zip_name}" >> "$GITHUB_ENV"
-
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+          .automation-venv/bin/python scripts/release_automation.py inspect-build \
+            --catalogue plugin-catalogue --tag "$RELEASE_TAG"
+      - name: Test trusted automation
+        run: .automation-venv/bin/python -m pytest tests/test_release_automation.py tests/test_catalogue_publisher.py tests/test_release_publisher.py
+      - name: Checkout exact validated tag commit, not dispatch branch
+        if: steps.inspect.outputs.state == 'build'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          name: openhop-nomad-plugin-wheel
-          path: |
-            dist/*.whl
-            ${{ env.WHEEL_ZIP }}
-
-      - name: Upload assets to GitHub Release
-        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
+          ref: ${{ steps.inspect.outputs.sha }}
+          path: release-source
+          persist-credentials: false
+      - name: Test and build without publishing credentials
+        if: steps.inspect.outputs.state == 'build'
+        env:
+          RELEASE_TAG: ${{ steps.inspect.outputs.tag }}
+        run: |
+          python3 -m venv .build-venv
+          .build-venv/bin/pip install -e './release-source[dev]' build -r scripts/automation-requirements.txt
+          .build-venv/bin/python -c 'import sys; from pathlib import Path; sys.path.insert(0,"scripts"); from release_automation import check_versions; import os; check_versions(os.environ["RELEASE_TAG"],Path("release-source"))'
+          (cd release-source && ../.build-venv/bin/python -m pytest)
+          .build-venv/bin/python -m build --wheel --outdir release-assets release-source
+          .build-venv/bin/python -c 'import os,zipfile; from pathlib import Path; tag=os.environ["RELEASE_TAG"]; wheel=Path("release-assets")/f"openhop_nomad_plugin-{tag[1:]}-py3-none-any.whl"; z=zipfile.ZipFile(f"release-assets/openhop-nomad-plugin-{tag}-wheel.zip","w",zipfile.ZIP_DEFLATED); z.write(wheel,wheel.name); z.close()'
+      - name: Upload tested wheel and bundle for isolated publication job
+        if: steps.inspect.outputs.state == 'build'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          files: |
-            dist/*.whl
-            ${{ env.WHEEL_ZIP }}
+          name: nomad-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: build-wheel
+    if: needs.build-wheel.outputs.state == 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted main transport only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Download this run's tested assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nomad-release-assets
+          path: release-assets
+      - name: Publish absent release or compare concurrent existing bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-wheel.outputs.tag }}
+          SOURCE_SHA: ${{ needs.build-wheel.outputs.sha }}
+        run: python3 scripts/publish_release.py --tag "$RELEASE_TAG" --sha "$SOURCE_SHA" --assets release-assets
