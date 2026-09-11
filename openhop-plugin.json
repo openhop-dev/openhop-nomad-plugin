@@ -8,6 +8,10 @@
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
   },
+  "ui": {
+    "type": "application",
+    "entry": "ui/index.html"
+  },
   "config": {
     "defaults": {
       "meshcore_host": "127.0.0.1",
@@ -29,6 +33,7 @@
       "reply_chunk_delay_seconds": 2.0,
       "max_prompt_bytes": 1000,
       "radio_prompt_enabled": true,
+      "radio_prompt_template": "You are answering a question received over a low-bandwidth MeshCore radio network.\nGive the most useful answer first.\nBe concise.\nUse plain text.\nDo not use Markdown tables.\nAvoid unnecessary introductions.\nAim for fewer than 400 characters when practical.\n\nUser question:\n{question}",
       "duplicate_ttl_seconds": 600,
       "log_level": "INFO"
     }

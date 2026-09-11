@@ -1,0 +1,5 @@
+# Trusted-main release/catalogue validation only; no plugin packaging changes.
+jsonschema==4.26.0
+packaging==26.3
+pytest==9.1.1
+PyYAML==6.0.3

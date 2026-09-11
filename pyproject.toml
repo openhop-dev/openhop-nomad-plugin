@@ -32,6 +32,11 @@ include = ["meshcore_nomad_bridge*"]
 
 [tool.setuptools.data-files]
 "share/openhop/plugins/openhop.nomad" = ["openhop-plugin.json", "config.default.json"]
+"share/openhop/plugins/openhop.nomad/ui" = [
+  "ui/index.html",
+  "ui/app.js",
+  "ui/styles.css"
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

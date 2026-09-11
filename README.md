@@ -93,6 +93,7 @@ Typical configuration:
   "reply_chunk_delay_seconds": 2.0,
   "max_prompt_bytes": 1000,
   "radio_prompt_enabled": true,
+  "radio_prompt_template": "You are answering a question received over a low-bandwidth MeshCore radio network.\\nGive the most useful answer first.\\n...\\n\\nUser question:\\n{question}",
   "duplicate_ttl_seconds": 600,
   "log_level": "INFO"
 }
@@ -147,7 +148,7 @@ Important environment overrides include:
 
 ## Plugin manifest
 
-`openhop-plugin.json` declares this as a simple Python service plugin:
+`openhop-plugin.json` declares this as a Python service plugin with a dashboard UI for configuration editing:
 
 ```json
 {
@@ -158,11 +159,15 @@ Important environment overrides include:
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
+  },
+  "ui": {
+    "type": "application",
+    "entry": "ui/index.html"
   }
 }
 ```
 
-There is deliberately no UI, permission model, Docker runtime or Repeater-internal hook in this plugin package.
+The plugin remains a lightweight service package and does not add a custom permission model, Docker runtime, or Repeater-internal hook.
 
 ## Standalone development
 
@@ -183,6 +188,10 @@ meshcore-nomad-bridge
 ```bash
 python -m pytest
 ```
+
+## Release automation
+
+See [release and catalogue automation](docs/release-automation.md) for immutable publication, manual existing-release retries, credential boundaries, read-only proposal rehearsal, and the outstanding catalogue test gate. Catalogue-owned policy—not this producer—decides automatic merging.
 
 ## Build wheel
 
