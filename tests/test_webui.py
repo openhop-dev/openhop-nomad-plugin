@@ -97,6 +97,9 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                 else control.input_value()
             )
             assert button.inner_text().strip() != "?"
+            indicator = button.locator('.help-indicator[aria-hidden="true"]')
+            assert indicator.inner_text() == "(i)"
+            assert indicator.is_visible()
             assert control.get_attribute("aria-labelledby") == button.get_attribute("id")
             button.click()
             assert button.get_attribute("aria-expanded") == "true"
