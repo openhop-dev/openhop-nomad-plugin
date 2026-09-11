@@ -5,13 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
-from typing import Any, Awaitable, Callable
-from urllib import error as urlerror
-from urllib import request as urlrequest
+from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
+
+MAX_HTTP_RESPONSE_BYTES = 262_144
+MAX_HTTP_HEADER_BYTES = 65_536
+MAX_SESSION_HISTORY_MESSAGES = 20
+MAX_SESSION_HISTORY_BYTES = 16_384
 
 
 class NomadUnavailable(RuntimeError):
@@ -42,6 +48,7 @@ class NomadClient:
         self._one_shot = one_shot
         self._session_map_path = Path(session_map_path)
         self._state_lock = asyncio.Lock()
+        self._sender_locks: dict[str, asyncio.Lock] = {}
 
         if http_request is not None:
             self._http_request = http_request
@@ -65,6 +72,11 @@ class NomadClient:
         if self._one_shot:
             return await self.ask(prompt)
 
+        sender_lock = await self._get_sender_lock(sender_id)
+        async with sender_lock:
+            return await self._ask_persistent_for_sender(sender_id, prompt)
+
+    async def _ask_persistent_for_sender(self, sender_id: str, prompt: str) -> str:
         session_id = await self._get_or_create_session_id(sender_id)
         try:
             history = await self._get_session_messages(session_id)
@@ -80,7 +92,9 @@ class NomadClient:
     async def reset_session_for_sender(self, sender_id: str) -> int:
         if self._one_shot:
             raise NomadUnavailable("reset_not_supported_in_one_shot")
-        return await self._create_fresh_session_for_sender(sender_id)
+        sender_lock = await self._get_sender_lock(sender_id)
+        async with sender_lock:
+            return await self._create_fresh_session_for_sender(sender_id)
 
     async def _chat(
         self,
@@ -118,7 +132,7 @@ class NomadClient:
         elapsed = monotonic() - start
         logger.info("NOMAD completed in %.2fs", elapsed)
 
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD request failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -156,6 +170,10 @@ class NomadClient:
             return existing
         return await self._create_fresh_session_for_sender(sender_id)
 
+    async def _get_sender_lock(self, sender_id: str) -> asyncio.Lock:
+        async with self._state_lock:
+            return self._sender_locks.setdefault(sender_id, asyncio.Lock())
+
     async def _create_fresh_session_for_sender(self, sender_id: str) -> int:
         payload: dict[str, object] = {
             "title": f"MeshCore {sender_id}",
@@ -176,7 +194,7 @@ class NomadClient:
             logger.warning("NOMAD network error while creating session: %s", exc)
             raise NomadUnavailable("network") from exc
 
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD create session failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -210,7 +228,7 @@ class NomadClient:
 
         if status_code == 404:
             raise _NomadSessionNotFound(session_id)
-        if status_code >= 400:
+        if not 200 <= status_code < 300:
             logger.warning("NOMAD get session failed with HTTP %s", status_code)
             raise NomadUnavailable(f"http_{status_code}")
 
@@ -233,7 +251,7 @@ class NomadClient:
             if not isinstance(content, str):
                 continue
             messages.append({"role": role, "content": content})
-        return messages
+        return _limit_session_history(messages)
 
     def _load_session_map(self) -> dict[str, int]:
         try:
@@ -291,6 +309,23 @@ def _parse_json_object(body: str) -> dict[str, Any]:
     return data
 
 
+def _limit_session_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    used_bytes = 0
+    for message in reversed(messages):
+        if len(selected) >= MAX_SESSION_HISTORY_MESSAGES:
+            break
+        message_bytes = len(message["role"].encode("utf-8")) + len(
+            message["content"].encode("utf-8")
+        )
+        if used_bytes + message_bytes > MAX_SESSION_HISTORY_BYTES:
+            break
+        selected.append(message)
+        used_bytes += message_bytes
+    selected.reverse()
+    return selected
+
+
 def _wrap_post_only(http_post: HttpPost) -> HttpRequest:
     async def _request(
         *,
@@ -316,24 +351,75 @@ async def _default_http_request(
     timeout_seconds: float,
 ) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
-
-    def _send() -> tuple[int, str]:
-        req = urlrequest.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method=method,
+    try:
+        return await asyncio.wait_for(
+            _async_http_request(method=method, url=url, body=body),
+            timeout=timeout_seconds,
         )
-        try:
-            with urlrequest.urlopen(req, timeout=timeout_seconds) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-                return int(response.status), raw
-        except urlerror.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-            return int(exc.code), raw
-        except TimeoutError:
-            raise
-        except OSError:
-            raise
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError("request_deadline_exceeded") from exc
 
-    return await asyncio.to_thread(_send)
+
+async def _async_http_request(
+    *,
+    method: str,
+    url: str,
+    body: bytes | None,
+) -> tuple[int, str]:
+    if method not in {"GET", "POST"}:
+        raise OSError("unsupported_http_method")
+    if any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        raise OSError("invalid_url")
+    # Dedicated c-ares resolver: no asyncio getaddrinfo executor jobs survive
+    # cancellation. Passing options avoids aiohttp's shared resolver lifetime.
+    resolver = aiohttp.AsyncResolver(tries=1)
+    try:
+        async with (
+            aiohttp.TCPConnector(resolver=resolver, use_dns_cache=False) as connector,
+            aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=None),
+                trust_env=False,
+                cookie_jar=aiohttp.DummyCookieJar(),
+                auto_decompress=False,
+                headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                max_line_size=8190,
+                max_field_size=8190,
+                max_headers=128,
+                read_bufsize=16_384,
+            ) as session,
+            session.request(
+                method,
+                url,
+                data=body,
+                allow_redirects=False,
+                headers={"Content-Type": "application/json"} if body is not None else None,
+            ) as response,
+        ):
+            if any(
+                ord(char) < 32 and char != "\t" or ord(char) == 127
+                for char in response.reason or ""
+            ):
+                raise OSError("invalid_http_response")
+            if response.headers.get("Transfer-Encoding", "chunked").lower() != "chunked":
+                raise OSError("invalid_http_response")
+            # Check aggregate size too; parser limits bound each field/count.
+            if sum(len(k) + len(v) + 4 for k, v in response.raw_headers) > MAX_HTTP_HEADER_BYTES:
+                raise OSError("invalid_http_response")
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise OSError("unsupported_content_encoding")
+            if (
+                response.content_length is not None
+                and response.content_length > MAX_HTTP_RESPONSE_BYTES
+            ):
+                raise OSError("response_too_large")
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(16_384):
+                if len(data) + len(chunk) > MAX_HTTP_RESPONSE_BYTES:
+                    raise OSError("response_too_large")
+                data.extend(chunk)
+            return response.status, data.decode("utf-8", errors="replace")
+    except aiohttp.ClientError as exc:
+        raise OSError("invalid_http_response") from exc
+    finally:
+        await resolver.close()

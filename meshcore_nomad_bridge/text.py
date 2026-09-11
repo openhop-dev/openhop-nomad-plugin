@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _HEADING_RE = re.compile(r"^#{1,6}\s*", re.MULTILINE)
 _TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)

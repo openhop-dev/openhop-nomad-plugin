@@ -6,8 +6,8 @@ import asyncio
 import contextlib
 import logging
 import struct
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
 from openhop_core.companion.constants import (
     CMD_APP_START,
@@ -125,7 +125,7 @@ class MeshCoreClient:
                 raise
             except Exception as exc:
                 self._connected.clear()
-                logger.warning("MeshCore connection lost: %s", exc)
+                logger.warning("MeshCore connection lost: %s", exc, exc_info=True)
 
             if stop_event.is_set() or self._stop_requested.is_set():
                 break
@@ -162,7 +162,7 @@ class MeshCoreClient:
                 code = frame[0]
                 if code == RESP_CODE_SENT:
                     logger.info(
-                        "DM ACK received for recipient=%s on attempt %s/%s",
+                        "Companion accepted DM for recipient=%s on attempt %s/%s (not RF delivery confirmation)",
                         recipient_prefix[:6].hex(),
                         attempt,
                         max_retries,
@@ -180,7 +180,7 @@ class MeshCoreClient:
             except asyncio.TimeoutError:
                 if attempt == max_retries:
                     logger.warning(
-                        "No DM ACK received for recipient=%s after %s attempts",
+                        "No send acceptance received for recipient=%s after %s attempts; outcome unknown",
                         recipient_prefix[:6].hex(),
                         max_retries,
                     )
@@ -188,7 +188,7 @@ class MeshCoreClient:
 
                 delay = 1.0 * (2 ** (attempt - 1))
                 logger.warning(
-                    "No DM ACK received for recipient=%s, retrying in %.1fs (%s/%s)",
+                    "No send acceptance received for recipient=%s, retrying in %.1fs (%s/%s)",
                     recipient_prefix[:6].hex(),
                     delay,
                     attempt,
