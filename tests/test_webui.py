@@ -120,6 +120,15 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             assert page.locator("#" + button.get_attribute("aria-controls")).is_visible()
             page.keyboard.press("Escape")
             assert button.get_attribute("aria-expanded") == "false"
+        allowlist_help = page.locator("#help-allowed_sender_prefixes")
+        assert allowlist_help.inner_text() == (
+            "Leave this list empty to allow everyone. Add one or more public keys "
+            "to enable the whitelist—only listed senders are allowed. "
+            "Enter only the first 12 hexadecimal characters of each sender's public "
+            "key, not the full key. One prefix per line or comma-separated; blank "
+            "entries are ignored. Only senders who can DM this Companion can use "
+            "the bridge; rate limits still apply."
+        )
         button = page.locator('button[data-field="max_chunk_bytes"]')
         button.click()
         page.locator("h1").click()
@@ -160,6 +169,14 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                 assert page.locator("#help-nomad_url").is_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}-help.png"), full_page=True)
+                page.keyboard.press("Escape")
+                page.locator('#label-allowed_sender_prefixes').click()
+                assert allowlist_help.is_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(
+                    path=str(tmp_path / f"{theme}-{width}-allowlist-help.png"),
+                    full_page=True,
+                )
                 page.keyboard.press("Escape")
         assert not errors
         assert not external
