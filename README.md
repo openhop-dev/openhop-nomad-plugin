@@ -18,7 +18,7 @@ NOMAD Bridge plugin
 MeshCore user
 ```
 
-The expected default Companion endpoint is `127.0.0.1:5001`. Give NOMAD a dedicated Repeater Companion identity and bind its frame server to localhost when the plugin runs on the same host.
+The expected default Companion endpoint is `127.0.0.1:5050`. Give NOMAD a dedicated Repeater Companion identity and bind its frame server to localhost when the plugin runs on the same host.
 
 Example Repeater configuration:
 
@@ -29,7 +29,7 @@ identities:
       identity_key: "PRIVATE_IDENTITY_KEY"
       settings:
         node_name: "NOMAD"
-        tcp_port: 5001
+        tcp_port: 5050
         bind_address: "127.0.0.1"
         tcp_timeout: 0
 ```
@@ -74,7 +74,7 @@ set `nomad_url` in `config.json`, or override it with `NOMAD_URL`, to a reachabl
 such as `http://192.0.2.10:8080` or `https://nomad.example.org`. Use
 `http://127.0.0.1:8080` only when NOMAD actually runs in the plugin's own network
 namespace (for example standalone processes on the same host).
-The Companion default remains `127.0.0.1:5001`; this change affects only NOMAD HTTP.
+The Companion default is `127.0.0.1:5050`, matching Repeater’s initial Companion port. Existing explicit ports are preserved; set `meshcore_port` or `MESHCORE_PORT` to match your dedicated Companion endpoint if it uses another port.
 
 ## config.json
 
@@ -95,7 +95,7 @@ Typical configuration:
 ```json
 {
   "meshcore_host": "127.0.0.1",
-  "meshcore_port": 5001,
+  "meshcore_port": 5050,
   "nomad_url": "http://nomad_admin:8080",
   "nomad_model": "qwen2.5:3b-instruct",
   "nomad_collection": null,

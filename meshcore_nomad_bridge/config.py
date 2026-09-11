@@ -58,7 +58,7 @@ class Settings:
         plugin_data_dir, config = _load_plugin_config()
 
         meshcore_host = _get_str("MESHCORE_HOST", "127.0.0.1", config)
-        meshcore_port = _get_int("MESHCORE_PORT", 5001, config)
+        meshcore_port = _get_int("MESHCORE_PORT", 5050, config)
 
         nomad_url = _get_required_str("NOMAD_URL", config)
         nomad_model = _get_required_str("NOMAD_MODEL", config)

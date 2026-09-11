@@ -6,7 +6,7 @@
 
   const defaults = {
     meshcore_host: "127.0.0.1",
-    meshcore_port: 5001,
+    meshcore_port: 5050,
     nomad_url: "http://nomad_admin:8080",
     nomad_model: "qwen2.5:3b-instruct",
     nomad_collection: null,

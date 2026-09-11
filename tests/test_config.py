@@ -56,7 +56,7 @@ def test_packaged_defaults_use_nomad_docker_endpoint(monkeypatch, tmp_path, sour
     settings = Settings.from_env()
 
     assert settings.nomad_url == "http://nomad_admin:8080"
-    assert (settings.meshcore_host, settings.meshcore_port) == ("127.0.0.1", 5001)
+    assert (settings.meshcore_host, settings.meshcore_port) == ("127.0.0.1", 5050)
 
 
 @pytest.mark.parametrize("source", ["ui/app.js", "ui/index.html"])
@@ -82,6 +82,40 @@ def test_existing_endpoint_is_preserved_without_rewriting_config(
 
     assert Settings.from_env().nomad_url == (override or url)
     assert config_path.read_bytes() == before
+
+
+def test_builtin_companion_port_defaults_to_5050(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://nomad_admin:8080")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    assert Settings.from_env().meshcore_port == 5050
+
+
+@pytest.mark.parametrize("override", [None, "6001"])
+def test_existing_companion_port_is_preserved(monkeypatch, tmp_path, override):
+    _clean_env(monkeypatch)
+    _write_config(
+        tmp_path, nomad_url="http://nomad_admin:8080", nomad_model="test-model", meshcore_port=5001
+    )
+    config_path = tmp_path / "config.json"
+    before = config_path.read_bytes()
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+    if override:
+        monkeypatch.setenv("MESHCORE_PORT", override)
+    assert Settings.from_env().meshcore_port == (int(override) if override else 5001)
+    assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("ui/app.js", "meshcore_port: 5050"),
+        ("ui/index.html", "127.0.0.1:5050"),
+    ],
+)
+def test_ui_companion_port_defaults_to_5050(source, expected):
+    root = Path(__file__).resolve().parents[1]
+    assert expected in (root / source).read_text(encoding="utf-8")
 
 
 def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
