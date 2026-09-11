@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from itertools import pairwise
 
 import pytest
 
@@ -103,7 +104,7 @@ async def test_reply_chunks_are_spaced_except_after_last(monkeypatch) -> None:
     await service._handle_message(_msg("chunk this", ts=701))
 
     assert len(mesh.sent) == 3
-    assert delays == [2.0, 2.0]
+    assert delays == pytest.approx([2.0, 2.0], abs=0.01)
 
 
 def _msg(text: str, ts: int = 1, sender: bytes = b"\x01\x02\x03\x04\x05\x06") -> IncomingMessage:
@@ -301,12 +302,8 @@ async def test_dispatch_silently_enforces_global_rate_limit() -> None:
     nomad = SlowNomad(delay=0)
     service = BridgeService(settings=settings, meshcore=mesh, nomad=nomad)
 
-    await service._dispatch_message(
-        _msg("first", ts=401, sender=b"\x01\x02\x03\x04\x05\x06")
-    )
-    await service._dispatch_message(
-        _msg("second", ts=402, sender=b"\x11\x12\x13\x14\x15\x16")
-    )
+    await service._dispatch_message(_msg("first", ts=401, sender=b"\x01\x02\x03\x04\x05\x06"))
+    await service._dispatch_message(_msg("second", ts=402, sender=b"\x11\x12\x13\x14\x15\x16"))
     await asyncio.gather(*list(service._inflight))
 
     assert nomad.calls == 1
@@ -387,3 +384,119 @@ async def test_reset_command_starts_new_session_in_persistent_mode() -> None:
     assert nomad.calls == 0
     assert nomad.resets == 1
     assert mesh.sent[-1][1] == NOMAD_RESET_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_failed_chunk_stops_remaining_reply(caplog):
+    class RejectMesh(FakeMeshCore):
+        async def send_text(self, recipient_prefix, text):
+            self.sent.append((recipient_prefix, text))
+            return False
+
+    mesh = RejectMesh()
+    service = BridgeService(
+        replace(_settings(), max_chunk_bytes=40, reply_chunk_delay_seconds=0), mesh, SlowNomad(0)
+    )
+    service._nomad.ask_for_sender = _long_answer
+    await service._handle_message(_msg("question"))
+    assert len(mesh.sent) == 1
+    assert "Stopping reply" in caplog.text
+
+
+async def _long_answer(*args):
+    return "x" * 95
+
+
+@pytest.mark.asyncio
+async def test_empty_allowlist_warns_at_startup(caplog):
+    mesh = FakeMeshCore()
+
+    async def run(*args):
+        return None
+
+    mesh.run = run
+    service = BridgeService(replace(_settings(), allowed_sender_prefixes=()), mesh, SlowNomad(0))
+    service._register_signals = lambda: None
+    await service.run()
+    assert "allowed_sender_prefixes is empty; all senders are denied" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_outbound_pacing_is_global_including_error_replies():
+    times = []
+
+    class TimedMesh(FakeMeshCore):
+        async def send_text(self, recipient_prefix, text):
+            times.append(asyncio.get_running_loop().time())
+            return await super().send_text(recipient_prefix, text)
+
+    service = BridgeService(
+        replace(_settings(), reply_chunk_delay_seconds=0.04, max_prompt_bytes=5),
+        TimedMesh(),
+        SlowNomad(0),
+    )
+    await asyncio.gather(*(service._handle_message(_msg("too long", ts=i)) for i in range(3)))
+    assert len(times) == 3
+    assert all(b - a >= 0.035 for a, b in pairwise(times))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_pacing_waiter_does_not_block_next_reply():
+    mesh = FakeMeshCore()
+    service = BridgeService(
+        replace(_settings(), reply_chunk_delay_seconds=0.05, max_prompt_bytes=5), mesh, SlowNomad(0)
+    )
+    await service._handle_message(_msg("too long", ts=1))
+    task = asyncio.create_task(service._handle_message(_msg("too long", ts=2)))
+    await asyncio.sleep(0.005)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(service._handle_message(_msg("too long", ts=3)), 0.2)
+    assert len(mesh.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_chunked_answers_share_pacing():
+    times = []
+
+    class TimedMesh(FakeMeshCore):
+        async def send_text(self, recipient_prefix, text):
+            times.append(asyncio.get_running_loop().time())
+            return await super().send_text(recipient_prefix, text)
+
+    mesh = TimedMesh()
+    service = BridgeService(
+        replace(_settings(), max_chunk_bytes=40, reply_chunk_delay_seconds=0.02), mesh, SlowNomad(0)
+    )
+    service._nomad.ask_for_sender = _long_answer
+    await asyncio.gather(
+        service._handle_message(_msg("a", ts=1)), service._handle_message(_msg("b", ts=2))
+    )
+    assert len(mesh.sent) == 6
+    assert all(b - a >= 0.018 for a, b in pairwise(times))
+
+
+@pytest.mark.asyncio
+async def test_cancelling_active_send_releases_pacing_lock():
+    entered = asyncio.Event()
+
+    class BlockingMesh(FakeMeshCore):
+        async def send_text(self, recipient_prefix, text):
+            await super().send_text(recipient_prefix, text)
+            if len(self.sent) == 1:
+                entered.set()
+                await asyncio.Event().wait()
+            return True
+
+    mesh = BlockingMesh()
+    service = BridgeService(
+        replace(_settings(), reply_chunk_delay_seconds=0.02), mesh, SlowNomad(0)
+    )
+    task = asyncio.create_task(service._handle_message(_msg("first", ts=1)))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(service._handle_message(_msg("next", ts=2)), 0.2)
+    assert len(mesh.sent) == 2

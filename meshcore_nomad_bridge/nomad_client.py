@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import logging
-import socket
-import ssl
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 MAX_HTTP_RESPONSE_BYTES = 262_144
 MAX_HTTP_HEADER_BYTES = 65_536
-HTTP_TOKEN_BYTES = frozenset(
-    b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-)
 MAX_SESSION_HISTORY_MESSAGES = 20
 MAX_SESSION_HISTORY_BYTES = 16_384
 
@@ -371,189 +366,60 @@ async def _async_http_request(
     url: str,
     body: bytes | None,
 ) -> tuple[int, str]:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise OSError("invalid_url")
-    try:
-        address = ipaddress.ip_address(parsed.hostname)
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    except ValueError as exc:
-        raise OSError("nomad_url_requires_ip_address") from exc
-
-    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
-    sock.setblocking(False)
-    writer: asyncio.StreamWriter | None = None
-    path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-    try:
-        await asyncio.get_running_loop().sock_connect(sock, (str(address), port))
-        ssl_context = ssl.create_default_context() if parsed.scheme == "https" else None
-        reader, writer = await asyncio.open_connection(
-            sock=sock,
-            ssl=ssl_context,
-            server_hostname=parsed.hostname if ssl_context else None,
-        )
-        sock = None
-        request = _build_http_request(method=method, parsed=parsed, path=path, body=body)
-        writer.write(request)
-        await writer.drain()
-        return await _read_async_http_response(reader, method)
-    finally:
-        if writer is not None:
-            writer.transport.abort()
-        elif sock is not None:
-            sock.close()
-
-
-def _build_http_request(*, method: str, parsed: Any, path: str, body: bytes | None) -> bytes:
     if method not in {"GET", "POST"}:
         raise OSError("unsupported_http_method")
-    if not path or any(ord(char) < 33 or ord(char) > 126 for char in path):
+    if any(ord(char) <= 32 or ord(char) == 127 for char in url):
         raise OSError("invalid_url")
-    default_port = 443 if parsed.scheme == "https" else 80
-    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-    if parsed.port and parsed.port != default_port:
-        host = f"{host}:{parsed.port}"
-    headers = [
-        f"{method} {path} HTTP/1.1",
-        f"Host: {host}",
-        "Accept: application/json",
-        "Connection: close",
-    ]
-    if body is not None:
-        headers.extend(("Content-Type: application/json", f"Content-Length: {len(body)}"))
+    # Dedicated c-ares resolver: no asyncio getaddrinfo executor jobs survive
+    # cancellation. Passing options avoids aiohttp's shared resolver lifetime.
+    resolver = aiohttp.AsyncResolver(tries=1)
     try:
-        return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + (body or b"")
-    except UnicodeEncodeError as exc:
-        raise OSError("invalid_url") from exc
-
-
-async def _read_async_http_response(
-    reader: asyncio.StreamReader, method: str
-) -> tuple[int, str]:
-    status_line = await _read_http_line(reader)
-    if not status_line.endswith(b"\r\n"):
-        raise OSError("invalid_http_response")
-    parts = status_line[:-2].split(b" ", 2)
-    try:
-        version, raw_status = parts[0], parts[1]
-        if version not in {b"HTTP/1.0", b"HTTP/1.1"}:
-            raise ValueError
-        if len(raw_status) != 3 or not raw_status.isdigit():
-            raise ValueError
-        if len(parts) == 3 and any(
-            (byte < 32 and byte != 9) or byte == 127 for byte in parts[2]
+        async with (
+            aiohttp.TCPConnector(resolver=resolver, use_dns_cache=False) as connector,
+            aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=None),
+                trust_env=False,
+                cookie_jar=aiohttp.DummyCookieJar(),
+                auto_decompress=False,
+                headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                max_line_size=8190,
+                max_field_size=8190,
+                max_headers=128,
+                read_bufsize=16_384,
+            ) as session,
+            session.request(
+                method,
+                url,
+                data=body,
+                allow_redirects=False,
+                headers={"Content-Type": "application/json"} if body is not None else None,
+            ) as response,
         ):
-            raise ValueError
-        status = int(raw_status)
-        if not 100 <= status <= 599:
-            raise ValueError
-    except (IndexError, ValueError) as exc:
-        raise OSError("invalid_http_response") from exc
-
-    header_bytes = len(status_line)
-    headers: dict[str, str] = {}
-    while True:
-        line = await _read_http_line(reader)
-        header_bytes += len(line)
-        if not line or header_bytes > MAX_HTTP_HEADER_BYTES:
-            raise OSError("invalid_http_response")
-        if line == b"\r\n":
-            break
-        key, value = _parse_header_line(line)
-        if key in headers:
-            raise OSError("invalid_http_response")
-        headers[key] = value
-
-    transfer_encoding = headers.get("transfer-encoding")
-    if transfer_encoding is not None and "content-length" in headers:
-        raise OSError("invalid_http_response")
-    if method == "HEAD" or status in {204, 304} or 100 <= status < 200:
-        raw = b""
-    elif transfer_encoding is not None:
-        if transfer_encoding.lower() != "chunked":
-            raise OSError("invalid_http_response")
-        raw = await _read_chunked_body(reader)
-    elif "content-length" in headers:
-        raw_length = headers["content-length"]
-        if not raw_length.isascii() or not raw_length.isdigit():
-            raise OSError("invalid_http_response")
-        length = int(raw_length)
-        if length > MAX_HTTP_RESPONSE_BYTES:
-            raise OSError("response_too_large")
-        try:
-            raw = await reader.readexactly(length)
-        except asyncio.IncompleteReadError as exc:
-            raise OSError("invalid_http_response") from exc
-    else:
-        try:
-            raw = await reader.readexactly(MAX_HTTP_RESPONSE_BYTES + 1)
-        except asyncio.IncompleteReadError as exc:
-            raw = exc.partial
-        if len(raw) > MAX_HTTP_RESPONSE_BYTES:
-            raise OSError("response_too_large")
-    return status, raw.decode("utf-8", errors="replace")
-
-
-async def _read_chunked_body(reader: asyncio.StreamReader) -> bytes:
-    body = bytearray()
-    framing_bytes = 0
-    while True:
-        size_line = await _read_http_line(reader)
-        framing_bytes += len(size_line)
-        if framing_bytes > MAX_HTTP_HEADER_BYTES:
-            raise OSError("invalid_http_response")
-        if not size_line.endswith(b"\r\n") or b";" in size_line:
-            raise OSError("invalid_http_response")
-        raw_size = size_line[:-2]
-        if not raw_size or any(byte not in b"0123456789abcdefABCDEF" for byte in raw_size):
-            raise OSError("invalid_http_response")
-        try:
-            size = int(raw_size, 16)
-        except ValueError as exc:
-            raise OSError("invalid_http_response") from exc
-        if size == 0:
-            while True:
-                trailer = await _read_http_line(reader)
-                framing_bytes += len(trailer)
-                if framing_bytes > MAX_HTTP_HEADER_BYTES:
-                    raise OSError("invalid_http_response")
-                if trailer == b"\r\n":
-                    return bytes(body)
-                if not trailer:
-                    raise OSError("invalid_http_response")
-                key, _ = _parse_header_line(trailer)
-                if key in {"content-length", "transfer-encoding"}:
-                    raise OSError("invalid_http_response")
-        if size < 0 or len(body) + size > MAX_HTTP_RESPONSE_BYTES:
-            raise OSError("response_too_large")
-        try:
-            body.extend(await reader.readexactly(size))
-            if await reader.readexactly(2) != b"\r\n":
+            if any(
+                ord(char) < 32 and char != "\t" or ord(char) == 127
+                for char in response.reason or ""
+            ):
                 raise OSError("invalid_http_response")
-        except asyncio.IncompleteReadError as exc:
-            raise OSError("invalid_http_response") from exc
-
-
-async def _read_http_line(reader: asyncio.StreamReader) -> bytes:
-    try:
-        line = await reader.readline()
-    except ValueError as exc:
+            if response.headers.get("Transfer-Encoding", "chunked").lower() != "chunked":
+                raise OSError("invalid_http_response")
+            # Check aggregate size too; parser limits bound each field/count.
+            if sum(len(k) + len(v) + 4 for k, v in response.raw_headers) > MAX_HTTP_HEADER_BYTES:
+                raise OSError("invalid_http_response")
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise OSError("unsupported_content_encoding")
+            if (
+                response.content_length is not None
+                and response.content_length > MAX_HTTP_RESPONSE_BYTES
+            ):
+                raise OSError("response_too_large")
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(16_384):
+                if len(data) + len(chunk) > MAX_HTTP_RESPONSE_BYTES:
+                    raise OSError("response_too_large")
+                data.extend(chunk)
+            return response.status, data.decode("utf-8", errors="replace")
+    except aiohttp.ClientError as exc:
         raise OSError("invalid_http_response") from exc
-    if len(line) > MAX_HTTP_HEADER_BYTES:
-        raise OSError("invalid_http_response")
-    return line
-
-
-def _parse_header_line(line: bytes) -> tuple[str, str]:
-    if not line.endswith(b"\r\n"):
-        raise OSError("invalid_http_response")
-    try:
-        raw_name, raw_value = line[:-2].split(b":", 1)
-    except ValueError as exc:
-        raise OSError("invalid_http_response") from exc
-    if not raw_name or any(byte not in HTTP_TOKEN_BYTES for byte in raw_name):
-        raise OSError("invalid_http_response")
-    if any((byte < 32 and byte != 9) or byte == 127 for byte in raw_value):
-        raise OSError("invalid_http_response")
-    return raw_name.decode("ascii").lower(), raw_value.decode("iso-8859-1").strip()
+    finally:
+        await resolver.close()

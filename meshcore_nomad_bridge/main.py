@@ -86,6 +86,8 @@ class BridgeService:
         self._meshcore = meshcore
         self._nomad = nomad
 
+        self._send_lock = asyncio.Lock()
+        self._next_send_at = 0.0
         self._stop_event = asyncio.Event()
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
         self._duplicate_cache = DuplicateCache(settings.duplicate_ttl_seconds)
@@ -98,6 +100,8 @@ class BridgeService:
         self._inflight: set[asyncio.Task[Any]] = set()
 
     async def run(self) -> None:
+        if not self._settings.allowed_sender_prefixes:
+            logger.warning("allowed_sender_prefixes is empty; all senders are denied")
         self._register_signals()
         await self._meshcore.run(self._dispatch_message, self._stop_event)
         await self._shutdown()
@@ -163,19 +167,19 @@ class BridgeService:
             try:
                 await self._nomad.reset_session_for_sender(sender_id)
             except NomadUnavailable:
-                await self._meshcore.send_text(message.sender_prefix, NOMAD_UNAVAILABLE_MESSAGE)
+                await self._send_text(message.sender_prefix, NOMAD_UNAVAILABLE_MESSAGE)
             else:
-                await self._meshcore.send_text(message.sender_prefix, NOMAD_RESET_MESSAGE)
+                await self._send_text(message.sender_prefix, NOMAD_RESET_MESSAGE)
             return
 
         if len(prompt.encode("utf-8")) > self._settings.max_prompt_bytes:
-            await self._meshcore.send_text(message.sender_prefix, NOMAD_TOO_LONG_MESSAGE)
+            await self._send_text(message.sender_prefix, NOMAD_TOO_LONG_MESSAGE)
             return
 
         acquired = False
         if self._settings.busy_wait_seconds == 0:
             if self._semaphore.locked():
-                await self._meshcore.send_text(message.sender_prefix, NOMAD_BUSY_MESSAGE)
+                await self._send_text(message.sender_prefix, NOMAD_BUSY_MESSAGE)
                 return
             await self._semaphore.acquire()
             acquired = True
@@ -186,7 +190,7 @@ class BridgeService:
                 )
                 acquired = True
             except asyncio.TimeoutError:
-                await self._meshcore.send_text(message.sender_prefix, NOMAD_BUSY_MESSAGE)
+                await self._send_text(message.sender_prefix, NOMAD_BUSY_MESSAGE)
                 return
 
         try:
@@ -194,7 +198,7 @@ class BridgeService:
             logger.info("Sending request to NOMAD")
             answer = await self._nomad.ask_for_sender(sender_id, self._build_nomad_prompt(prompt))
         except NomadUnavailable:
-            await self._meshcore.send_text(message.sender_prefix, NOMAD_UNAVAILABLE_MESSAGE)
+            await self._send_text(message.sender_prefix, NOMAD_UNAVAILABLE_MESSAGE)
             return
         finally:
             if acquired:
@@ -214,9 +218,26 @@ class BridgeService:
 
         logger.info("Sending %d MeshCore reply packets", len(chunks))
         for index, chunk in enumerate(chunks):
-            await self._meshcore.send_text(message.sender_prefix, chunk)
-            if index + 1 < len(chunks) and self._settings.reply_chunk_delay_seconds > 0:
-                await asyncio.sleep(self._settings.reply_chunk_delay_seconds)
+            if not await self._send_text(message.sender_prefix, chunk):
+                logger.warning(
+                    "Stopping reply to %s: chunk %d/%d not accepted or acceptance unknown",
+                    sender_id,
+                    index + 1,
+                    len(chunks),
+                )
+                break
+
+    async def _send_text(self, recipient_prefix: bytes, text: str) -> bool:
+        # Serialize all replies, including short errors, across concurrent requests.
+        async with self._send_lock:
+            delay = self._next_send_at - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                return await self._meshcore.send_text(recipient_prefix, text)
+            finally:
+                # Also pace a rejected/uncertain/cancelled send; it may have reached RF.
+                self._next_send_at = time.monotonic() + self._settings.reply_chunk_delay_seconds
 
     def _build_nomad_prompt(self, prompt: str) -> str:
         if not self._settings.radio_prompt_enabled:

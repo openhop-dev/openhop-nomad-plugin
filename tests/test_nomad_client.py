@@ -47,12 +47,14 @@ class RedirectHandler(BaseHTTPRequestHandler):
         return None
 
 
-def test_http_request_rejects_control_characters_in_target() -> None:
-    parsed = nomad_client.urlsplit("http://127.0.0.1")
-
+@pytest.mark.asyncio
+async def test_http_request_rejects_control_characters_in_target() -> None:
     with pytest.raises(OSError, match="invalid_url"):
-        nomad_client._build_http_request(
-            method="GET", parsed=parsed, path="/ok\r\nX-Injected: yes", body=None
+        await nomad_client._default_http_request(
+            method="GET",
+            url="http://127.0.0.1/ok\r\nX-Injected: yes",
+            payload=None,
+            timeout_seconds=2,
         )
 
 
@@ -162,8 +164,7 @@ async def test_oversized_http_header_is_a_controlled_network_error() -> None:
 @pytest.mark.asyncio
 async def test_chunked_response_is_decoded() -> None:
     status, body = await _request_raw_response(
-        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-        b"3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"
     )
 
     assert status == 200
@@ -182,18 +183,9 @@ async def test_chunked_response_is_decoded() -> None:
             b"2\r\n{}\r\n0\r\n\r\n"
         ),
         b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
-        (
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: notchunked\r\n\r\n"
-            b"2\r\n{}\r\n0\r\n\r\n"
-        ),
-        (
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-            b"2\r\n{}\r\n0\r\ngarbage\r\n\r\n"
-        ),
-        (
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-            b"2;bad=\x00\r\n{}\r\n0\r\n\r\n"
-        ),
+        (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: notchunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n"),
+        (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\ngarbage\r\n\r\n"),
+        (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2;bad=\x00\r\n{}\r\n0\r\n\r\n"),
     ],
 )
 async def test_malformed_http_framing_is_rejected(raw_response: bytes) -> None:
@@ -203,12 +195,10 @@ async def test_malformed_http_framing_is_rejected(raw_response: bytes) -> None:
 
 @pytest.mark.asyncio
 async def test_chunked_response_rejects_missing_terminal_line() -> None:
-    reader = asyncio.StreamReader()
-    reader.feed_data(b"1\r\nx\r\n0\r\n")
-    reader.feed_eof()
-
     with pytest.raises(OSError, match="invalid_http_response"):
-        await nomad_client._read_chunked_body(reader)
+        await _request_raw_response(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n"
+        )
 
 
 @pytest.mark.asyncio
@@ -231,17 +221,13 @@ async def test_default_http_request_converts_malformed_http_to_oserror() -> None
 @pytest.mark.asyncio
 async def test_default_http_request_rejects_oversized_success_body() -> None:
     with pytest.raises(OSError, match="response_too_large"):
-        await _request_raw_response(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 262145\r\n\r\n"
-        )
+        await _request_raw_response(b"HTTP/1.1 200 OK\r\nContent-Length: 262145\r\n\r\n")
 
 
 @pytest.mark.asyncio
 async def test_default_http_request_rejects_oversized_error_body() -> None:
     with pytest.raises(OSError, match="response_too_large"):
-        await _request_raw_response(
-            b"HTTP/1.1 500 Error\r\nContent-Length: 262145\r\n\r\n"
-        )
+        await _request_raw_response(b"HTTP/1.1 500 Error\r\nContent-Length: 262145\r\n\r\n")
 
 
 @pytest.mark.asyncio
@@ -250,7 +236,10 @@ async def test_nomad_client_success() -> None:
         assert url == "http://nomad.local/api/ollama/chat"
         assert payload["stream"] is False
         assert timeout_seconds == 5
-        return 200, '{"message":{"role":"assistant","content":"Hello from NOMAD"},"done":true,"model":"test"}'
+        return (
+            200,
+            '{"message":{"role":"assistant","content":"Hello from NOMAD"},"done":true,"model":"test"}',
+        )
 
     client = NomadClient(
         base_url="http://nomad.local",
@@ -325,7 +314,10 @@ async def test_nomad_client_persistent_mode_creates_and_reuses_session(tmp_path)
         if method == "POST" and url == "http://nomad.local/api/chat/sessions":
             return 201, '{"id":"42","title":"MeshCore sender-a","model":"test-model"}'
         if method == "GET" and url == "http://nomad.local/api/chat/sessions/42":
-            return 200, '{"id":"42","messages":[{"role":"user","content":"old q"},{"role":"assistant","content":"old a"}]}'
+            return (
+                200,
+                '{"id":"42","messages":[{"role":"user","content":"old q"},{"role":"assistant","content":"old a"}]}',
+            )
         if method == "POST" and url == "http://nomad.local/api/ollama/chat":
             assert payload is not None
             assert payload["sessionId"] == 42
@@ -352,7 +344,11 @@ async def test_nomad_client_persistent_mode_creates_and_reuses_session(tmp_path)
 
     assert result == "new a"
     assert session_map.read_text(encoding="utf-8") == '{"sender-a": 42}'
-    assert calls[0] == ("POST", "http://nomad.local/api/chat/sessions", {"title": "MeshCore sender-a", "model": "test-model"})
+    assert calls[0] == (
+        "POST",
+        "http://nomad.local/api/chat/sessions",
+        {"title": "MeshCore sender-a", "model": "test-model"},
+    )
 
 
 @pytest.mark.asyncio
@@ -472,3 +468,169 @@ def test_persistent_history_is_limited_by_utf8_bytes() -> None:
     history = nomad_client._limit_session_history(messages)
 
     assert history == [messages[-1]]
+
+
+@pytest.mark.asyncio
+async def test_hostname_http_request_with_repeated_standard_headers():
+    async def handle(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 2\r\n\r\n{}"
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    async with server:
+        result = await nomad_client._default_http_request(
+            method="GET",
+            url=f"http://localhost:{server.sockets[0].getsockname()[1]}/",
+            payload=None,
+            timeout_seconds=2,
+        )
+    assert result == (200, "{}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"HTTP/1.1 200 OK\r\n" + b"X: a\r\n" * 129 + b"\r\n",
+        b"HTTP/1.1 200 OK\r\n" + b"X: " + b"a" * 8191 + b"\r\n\r\n",
+        b"HTTP/1.1 200 OK\r\n" + (b"X: " + b"a" * 8000 + b"\r\n") * 9 + b"\r\n",
+    ],
+)
+async def test_header_limits(raw):
+    with pytest.raises(OSError, match="invalid_http_response"):
+        await _request_raw_response(raw)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("framing", [b"Connection: close\r\n", b"Transfer-Encoding: chunked\r\n"])
+async def test_streaming_body_limit_without_content_length(framing):
+    body = b"x" * 262145
+    if b"chunked" in framing:
+        body = b"40001\r\n" + body + b"\r\n0\r\n\r\n"
+    with pytest.raises(OSError, match="response_too_large"):
+        await _request_raw_response(b"HTTP/1.1 200 OK\r\n" + framing + b"\r\n" + body)
+
+
+@pytest.mark.asyncio
+async def test_compressed_response_is_rejected_without_decompression():
+    with pytest.raises(OSError, match="unsupported_content_encoding"):
+        await _request_raw_response(
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_inflight_http_timeout_or_cancellation_closes_socket(cancel):
+    entered, closed = asyncio.Event(), asyncio.Event()
+
+    async def handle(reader, writer):
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            entered.set()
+            await reader.read()
+            closed.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    async with server:
+        task = asyncio.create_task(
+            nomad_client._default_http_request(
+                method="GET",
+                url=f"http://localhost:{server.sockets[0].getsockname()[1]}/",
+                payload=None,
+                timeout_seconds=0.15 if not cancel else 5,
+            )
+        )
+        await asyncio.wait_for(entered.wait(), 2)
+        if cancel:
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
+            await task
+        await asyncio.wait_for(closed.wait(), 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("respond", [True, False])
+async def test_cares_dns_resolution_and_deadline_without_executor(monkeypatch, respond):
+    import functools
+    import struct
+
+    queried = asyncio.Event()
+
+    class DNS(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, data, address):
+            queried.set()
+            if not respond:
+                return
+            end = 12
+            while data[end]:
+                end += data[end] + 1
+            end += 1
+            qtype = struct.unpack("!H", data[end : end + 2])[0]
+            question = data[12 : end + 4]
+            answer = (
+                (b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 10, 4) + b"\x7f\x00\x00\x01")
+                if qtype == 1
+                else b""
+            )
+            self.transport.sendto(
+                data[:2] + struct.pack("!HHHHH", 0x8180, 1, bool(answer), 0, 0) + question + answer,
+                address,
+            )
+
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(DNS, local_addr=("127.0.0.1", 0))
+    real_resolver = nomad_client.aiohttp.AsyncResolver
+    monkeypatch.setattr(
+        nomad_client.aiohttp,
+        "AsyncResolver",
+        functools.partial(
+            real_resolver,
+            nameservers=["127.0.0.1"],
+            udp_port=transport.get_extra_info("sockname")[1],
+        ),
+    )
+
+    def forbid_executor(*args, **kwargs):
+        raise AssertionError("DNS must not use blocking getaddrinfo workers")
+
+    monkeypatch.setattr(loop, "run_in_executor", forbid_executor)
+
+    async def handle(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    before = asyncio.all_tasks()
+    try:
+        async with server:
+            request = nomad_client._default_http_request(
+                method="GET",
+                url=f"http://nomad_admin.test:{server.sockets[0].getsockname()[1]}/",
+                payload=None,
+                timeout_seconds=1 if respond else 0.1,
+            )
+            if respond:
+                assert await request == (200, "{}")
+            else:
+                with pytest.raises(TimeoutError):
+                    await request
+        assert queried.is_set()
+        await asyncio.sleep(0)
+        assert not (asyncio.all_tasks() - before)
+    finally:
+        transport.close()

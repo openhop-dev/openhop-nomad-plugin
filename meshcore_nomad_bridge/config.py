@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import math
 import os
@@ -262,7 +261,8 @@ def _validate(settings: Settings) -> None:
         parsed_url = urlsplit(settings.nomad_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
             raise ValueError
-        ipaddress.ip_address(parsed_url.hostname)
+        if any(ord(char) <= 32 or ord(char) == 127 for char in settings.nomad_url):
+            raise ValueError
         port = parsed_url.port
         if (
             parsed_url.username
@@ -275,7 +275,7 @@ def _validate(settings: Settings) -> None:
         if port is not None and not 1 <= port <= 65535:
             raise ValueError
     except ValueError as exc:
-        raise ConfigError("NOMAD_URL must be a valid HTTP(S) URL with an IP address") from exc
+        raise ConfigError("NOMAD_URL must be a valid HTTP(S) origin with a hostname or IP address") from exc
     if not settings.nomad_session_map_path:
         raise ConfigError("NOMAD_SESSION_MAP_PATH must not be empty")
 

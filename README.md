@@ -113,8 +113,29 @@ limits permit one active request, two requests per sender per minute, and four r
 globally per minute.
 Rejected overload and authorization traffic is dropped without an RF reply. NOMAD HTTP
 responses are capped at 256 KiB, redirects are not followed, and the configured timeout is
-an end-to-end request deadline implemented without non-cancellable worker threads. `NOMAD_URL`
-must use an IP literal so DNS resolution cannot outlive that deadline.
+an end-to-end deadline covering DNS, connection/TLS, headers and body reads. The transport
+uses `aiohttp` with a dedicated `aiodns`/c-ares resolver, closing connections and cancelling
+DNS queries on timeout or cancellation rather than leaving blocking Python `getaddrinfo`
+executor jobs running. c-ares may use its own native event thread; this is not a guarantee
+that the process creates no threads. It uses DNS/hosts resolution, not every OS NSS/mDNS
+plugin: `.local` names require a DNS/hosts entry or an IP address where mDNS is unavailable.
+
+`NOMAD_URL` accepts HTTP(S) hostnames (including Docker names such as
+`http://nomad_admin:8080`), IPv4 and bracketed IPv6. Docker names only resolve when the
+plugin container shares the appropriate network. Credentials, paths (except `/`), query
+strings and fragments are not accepted in the configured origin. TLS certificates are
+verified; environment proxies and cookies are not used. Repeated standard response headers
+are supported. Parser limits are 8,190 bytes per header field/status line and 128 headers
+and trailers; aggregate response headers are checked against 64 KiB after parsing.
+Compressed responses are rejected (the request asks for identity encoding), so compression
+cannot bypass the 256 KiB body cap.
+
+All outgoing replies share `reply_chunk_delay_seconds` pacing, including short error
+responses and concurrent answers. The interval starts when the previous send finishes;
+there is no trailing sleep after the last packet. Companion retries remain internal to
+`send_text` with their existing backoff. A rejected or unconfirmed chunk stops the rest of
+that answer. `RESP_CODE_SENT` means Companion send acceptance, **not an over-air delivery
+ACK**; retrying after an acceptance timeout can produce duplicates.
 
 This keeps environment variables available for development and existing standalone deployments.
 
@@ -137,7 +158,7 @@ Important environment overrides include:
 - `NOMAD_BUSY_WAIT_SECONDS`
 - `MAX_REPLY_CHUNKS`
 - `MAX_CHUNK_BYTES`
-- `REPLY_CHUNK_DELAY_SECONDS` (0–60 seconds between multi-packet reply chunks)
+- `REPLY_CHUNK_DELAY_SECONDS` (0–60 seconds between outgoing reply sends, globally)
 - `MAX_PROMPT_BYTES`
 - `RADIO_PROMPT_ENABLED`
 - `RADIO_PROMPT_TEMPLATE`
@@ -145,6 +166,18 @@ Important environment overrides include:
 - `LOG_LEVEL`
 
 `NOMAD_URL` and `NOMAD_MODEL` must be provided by `config.json` or environment variables.
+
+## Upgrading from v0.1.2
+
+Install with dependencies (including the new `aiohttp` and `aiodns` requirements). Python
+3.10 and newer remain supported. The `openhop-core==1.1.1` pin is unchanged.
+Before restarting, set `allowed_sender_prefixes` to the permitted 12-hex-character sender
+prefixes and ensure `one_shot` is `true`. An empty allowlist now denies everyone and logs a
+startup warning; there is no public/open mode. Old persistent-session maps are not deleted,
+but persistent mode is rejected at startup. Existing hostname/IP URLs remain usable subject
+to the origin rules above. Review the conservative request limits and global reply pacing;
+these intentionally restrict traffic compared with earlier versions. No automatic config
+migration or deployment is performed.
 
 ## Plugin manifest
 
@@ -180,6 +213,7 @@ pip install -e .[dev]
 
 export NOMAD_URL=http://127.0.0.1:8080
 export NOMAD_MODEL=qwen2.5:3b-instruct
+export ALLOWED_SENDER_PREFIXES=001122334455  # replace with the permitted sender
 meshcore-nomad-bridge
 ```
 

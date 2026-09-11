@@ -79,7 +79,9 @@ def test_settings_load_plugin_owned_config(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.allowed_sender_prefixes == ("010203040506", "aabbccddeeff")
 
 
-def test_environment_overrides_plugin_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_environment_overrides_plugin_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _clean_env(monkeypatch)
     data_dir = tmp_path / "plugin-data"
     _write_config(
@@ -100,7 +102,9 @@ def test_environment_overrides_plugin_config(monkeypatch: pytest.MonkeyPatch, tm
     assert settings.meshcore_port == 6001
 
 
-def test_session_map_defaults_to_plugin_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_session_map_defaults_to_plugin_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _clean_env(monkeypatch)
     data_dir = tmp_path / "plugin-data"
     _write_config(data_dir, nomad_url="http://10.5.30.7", nomad_model="test-model")
@@ -164,16 +168,13 @@ def test_nonfinite_numeric_settings_are_rejected(
 @pytest.mark.parametrize(
     "url",
     [
-        "http://nomad.local:8080",
         "http://10.5.30.7:bad",
         "http://10.5.30.7:70000",
         "http://10.5.30.7/base",
         "http://10.5.30.7/?query=1",
     ],
 )
-def test_nomad_url_requires_valid_ip_literal(
-    monkeypatch: pytest.MonkeyPatch, url: str
-) -> None:
+def test_nomad_url_rejects_invalid_origin(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("NOMAD_URL", url)
     monkeypatch.setenv("NOMAD_MODEL", "test-model")
@@ -229,3 +230,19 @@ def test_invalid_plugin_config_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_
 
     with pytest.raises(ConfigError, match="config.json"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://nomad.local:8080",
+        "http://nomad_admin:8080",
+        "https://localhost",
+        "http://[::1]:8080",
+    ],
+)
+def test_nomad_url_accepts_hostnames_and_ip_literals(monkeypatch, url):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", url)
+    monkeypatch.setenv("NOMAD_MODEL", "test")
+    assert Settings.from_env().nomad_url == url
