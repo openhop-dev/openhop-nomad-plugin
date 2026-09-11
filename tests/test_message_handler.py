@@ -373,7 +373,7 @@ async def test_duplicate_retransmission_does_not_consume_rate_capacity() -> None
 
 
 @pytest.mark.asyncio
-async def test_reset_command_starts_new_session_in_persistent_mode() -> None:
+async def test_reset_command_clears_memory() -> None:
     settings = replace(_settings(), one_shot=False)
     mesh = FakeMeshCore()
     nomad = SlowNomad(delay=0)
@@ -384,6 +384,22 @@ async def test_reset_command_starts_new_session_in_persistent_mode() -> None:
     assert nomad.calls == 0
     assert nomad.resets == 1
     assert mesh.sent[-1][1] == NOMAD_RESET_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_reset_obeys_global_concurrency_and_dispatch_admission():
+    settings = replace(_settings(), one_shot=False, busy_wait_seconds=0,
+                       reply_chunk_delay_seconds=0, max_concurrent_requests=1)
+    nomad, mesh = SlowNomad(0), FakeMeshCore()
+    service = BridgeService(settings, mesh, nomad)
+    await service._semaphore.acquire()
+    await service._handle_message(_msg('/new', ts=999))
+    assert nomad.resets == 0
+    assert mesh.sent[-1][1] == NOMAD_BUSY_MESSAGE
+    service._semaphore.release()
+    await service._dispatch_message(_msg('/reset', sender=b'abcdef', ts=1000))
+    assert not service._inflight
+    assert nomad.resets == 0
 
 
 @pytest.mark.asyncio

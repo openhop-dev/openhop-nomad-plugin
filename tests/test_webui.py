@@ -113,7 +113,8 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         button.click()
         page.locator("h1").click()
         assert button.get_attribute("aria-expanded") == "false"
-        assert page.locator("#one_shot").is_disabled()
+        assert page.locator("#one_shot").is_enabled()
+        page.locator("#one_shot").uncheck()
         checkbox = page.get_by_role("checkbox", name="Radio prompt enabled", exact=True)
         original_checked = checkbox.is_checked()
         checkbox.click()
@@ -126,6 +127,7 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         page.wait_for_function(
             "document.querySelector('#global-status').textContent.includes('Saved')"
         )
+        assert posts[-1]["config"]["one_shot"] is False
         assert posts[-1]["restart"] is True
         assert posts[-1]["id"] == "openhop.nomad"
         assert posts[-1]["config"]["future_option"] == {"keep": True}
@@ -134,6 +136,7 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         page.wait_for_function(
             "document.querySelector('#global-status').textContent.includes('Ready')"
         )
+        assert not page.locator("#one_shot").is_checked()
         assert page.locator("#max_chunk_bytes").input_value() == "90"
         assert page.locator("#max_concurrent_requests").input_value() == "1"
         for theme in ("light", "dark"):

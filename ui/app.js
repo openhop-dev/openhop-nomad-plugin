@@ -211,7 +211,7 @@
       nomad_model: nomadModel,
       nomad_collection: collectionRaw ? collectionRaw : null,
       nomad_timeout_seconds: timeout,
-      one_shot: true,
+      one_shot: $("one_shot").checked,
       max_pending_requests: maxPending,
       max_requests_per_sender: perSender,
       max_requests_global: globalLimit,

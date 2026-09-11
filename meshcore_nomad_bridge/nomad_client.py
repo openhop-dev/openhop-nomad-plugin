@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from time import monotonic
-from typing import Any
 
 import aiohttp
 
@@ -18,6 +17,8 @@ MAX_HTTP_RESPONSE_BYTES = 262_144
 MAX_HTTP_HEADER_BYTES = 65_536
 MAX_SESSION_HISTORY_MESSAGES = 20
 MAX_SESSION_HISTORY_BYTES = 16_384
+MAX_CONVERSATION_SENDERS = 64
+CONVERSATION_TTL_SECONDS = 1800
 
 
 class NomadUnavailable(RuntimeError):
@@ -46,9 +47,14 @@ class NomadClient:
         self._timeout_seconds = timeout_seconds
         self._collection = collection
         self._one_shot = one_shot
-        self._session_map_path = Path(session_map_path)
-        self._state_lock = asyncio.Lock()
-        self._sender_locks: dict[str, asyncio.Lock] = {}
+        # Retain the argument for compatibility, but never read/write legacy maps.
+        _ = session_map_path
+        # Fixed lock stripes bound bookkeeping even for an unlimited sender stream.
+        # Hash collisions only serialize unrelated senders; histories stay isolated.
+        self._sender_locks = [asyncio.Lock() for _ in range(MAX_CONVERSATION_SENDERS)]
+        self._histories: OrderedDict[
+            str, tuple[float, list[dict[str, str]], asyncio.TimerHandle]
+        ] = OrderedDict()
 
         if http_request is not None:
             self._http_request = http_request
@@ -57,50 +63,58 @@ class NomadClient:
         else:
             self._http_request = _default_http_request
 
-        self._sender_sessions = self._load_session_map() if not one_shot else {}
-
     async def close(self) -> None:
-        return None
+        for sender_id in list(self._histories):
+            self._forget(sender_id)
 
     async def ask(self, prompt: str) -> str:
-        return await self._chat(
-            messages=[{"role": "user", "content": prompt}],
-            session_id=None,
-        )
+        return await self._chat(messages=[{"role": "user", "content": prompt}])
 
     async def ask_for_sender(self, sender_id: str, prompt: str) -> str:
         if self._one_shot:
             return await self.ask(prompt)
+        async with self._sender_locks[hash(sender_id) % len(self._sender_locks)]:
+            self._prune()
+            current = {"role": "user", "content": prompt}
+            remaining = MAX_SESSION_HISTORY_BYTES - _message_bytes(current)
+            if remaining < 0:
+                raise NomadUnavailable("prompt_too_large")
+            previous = self._histories.get(sender_id)
+            history = _limit_pairs(previous[1] if previous else [], remaining)
+            answer = await self._chat(messages=[*history, current])
+            # Commit only a complete successful pair; failures/cancellation change nothing.
+            history = _limit_pairs([*history, current, {"role": "assistant", "content": answer}])
+            self._prune()
+            self._forget(sender_id)
+            if history:
+                while len(self._histories) >= MAX_CONVERSATION_SENDERS:
+                    self._forget(next(iter(self._histories)))
+                timer = asyncio.get_running_loop().call_later(
+                    CONVERSATION_TTL_SECONDS, self._forget, sender_id
+                )
+                self._histories[sender_id] = (monotonic() + CONVERSATION_TTL_SECONDS, history, timer)
+            return answer
 
-        sender_lock = await self._get_sender_lock(sender_id)
-        async with sender_lock:
-            return await self._ask_persistent_for_sender(sender_id, prompt)
+    async def reset_session_for_sender(self, sender_id: str) -> None:
+        async with self._sender_locks[hash(sender_id) % len(self._sender_locks)]:
+            self._prune()
+            self._forget(sender_id)
 
-    async def _ask_persistent_for_sender(self, sender_id: str, prompt: str) -> str:
-        session_id = await self._get_or_create_session_id(sender_id)
-        try:
-            history = await self._get_session_messages(session_id)
-        except _NomadSessionNotFound:
-            session_id = await self._create_fresh_session_for_sender(sender_id)
-            history = []
+    def _forget(self, sender_id: str) -> None:
+        entry = self._histories.pop(sender_id, None)
+        if entry is not None:
+            entry[2].cancel()
 
-        return await self._chat(
-            messages=[*history, {"role": "user", "content": prompt}],
-            session_id=session_id,
-        )
-
-    async def reset_session_for_sender(self, sender_id: str) -> int:
-        if self._one_shot:
-            raise NomadUnavailable("reset_not_supported_in_one_shot")
-        sender_lock = await self._get_sender_lock(sender_id)
-        async with sender_lock:
-            return await self._create_fresh_session_for_sender(sender_id)
+    def _prune(self) -> None:
+        now = monotonic()
+        for sender_id, (expires, _, _) in list(self._histories.items()):
+            if expires <= now:
+                self._forget(sender_id)
 
     async def _chat(
         self,
         *,
         messages: list[dict[str, str]],
-        session_id: int | None,
     ) -> str:
         payload: dict[str, object] = {
             "model": self._model,
@@ -108,8 +122,6 @@ class NomadClient:
             "stream": False,
             "think": False,
         }
-        if session_id is not None:
-            payload["sessionId"] = session_id
         if self._collection:
             payload["collection"] = self._collection
 
@@ -163,166 +175,22 @@ class NomadClient:
 
         return content
 
-    async def _get_or_create_session_id(self, sender_id: str) -> int:
-        async with self._state_lock:
-            existing = self._sender_sessions.get(sender_id)
-        if existing is not None:
-            return existing
-        return await self._create_fresh_session_for_sender(sender_id)
-
-    async def _get_sender_lock(self, sender_id: str) -> asyncio.Lock:
-        async with self._state_lock:
-            return self._sender_locks.setdefault(sender_id, asyncio.Lock())
-
-    async def _create_fresh_session_for_sender(self, sender_id: str) -> int:
-        payload: dict[str, object] = {
-            "title": f"MeshCore {sender_id}",
-            "model": self._model,
-        }
-
-        try:
-            status_code, body = await self._http_request(
-                method="POST",
-                url=f"{self._base_url}/api/chat/sessions",
-                payload=payload,
-                timeout_seconds=self._timeout_seconds,
-            )
-        except TimeoutError as exc:
-            logger.warning("NOMAD create session request timed out")
-            raise NomadUnavailable("timeout") from exc
-        except OSError as exc:
-            logger.warning("NOMAD network error while creating session: %s", exc)
-            raise NomadUnavailable("network") from exc
-
-        if not 200 <= status_code < 300:
-            logger.warning("NOMAD create session failed with HTTP %s", status_code)
-            raise NomadUnavailable(f"http_{status_code}")
-
-        data = _parse_json_object(body)
-        raw_id = data.get("id")
-        try:
-            session_id = int(raw_id)
-        except (TypeError, ValueError) as exc:
-            logger.warning("NOMAD create session response missing numeric id")
-            raise NomadUnavailable("invalid_session_id") from exc
-
-        async with self._state_lock:
-            self._sender_sessions[sender_id] = session_id
-            self._save_session_map(self._sender_sessions)
-        return session_id
-
-    async def _get_session_messages(self, session_id: int) -> list[dict[str, str]]:
-        try:
-            status_code, body = await self._http_request(
-                method="GET",
-                url=f"{self._base_url}/api/chat/sessions/{session_id}",
-                payload=None,
-                timeout_seconds=self._timeout_seconds,
-            )
-        except TimeoutError as exc:
-            logger.warning("NOMAD get session request timed out")
-            raise NomadUnavailable("timeout") from exc
-        except OSError as exc:
-            logger.warning("NOMAD network error while reading session: %s", exc)
-            raise NomadUnavailable("network") from exc
-
-        if status_code == 404:
-            raise _NomadSessionNotFound(session_id)
-        if not 200 <= status_code < 300:
-            logger.warning("NOMAD get session failed with HTTP %s", status_code)
-            raise NomadUnavailable(f"http_{status_code}")
-
-        data = _parse_json_object(body)
-        raw_messages = data.get("messages")
-        if raw_messages is None:
-            return []
-        if not isinstance(raw_messages, list):
-            logger.warning("NOMAD session response has invalid messages field")
-            raise NomadUnavailable("invalid_session_messages")
-
-        messages: list[dict[str, str]] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            role = item.get("role")
-            content = item.get("content")
-            if role not in {"system", "user", "assistant"}:
-                continue
-            if not isinstance(content, str):
-                continue
-            messages.append({"role": role, "content": content})
-        return _limit_session_history(messages)
-
-    def _load_session_map(self) -> dict[str, int]:
-        try:
-            raw = self._session_map_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return {}
-        except OSError as exc:
-            logger.warning("Failed to read session map %s: %s", self._session_map_path, exc)
-            return {}
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("Session map file is invalid JSON: %s", self._session_map_path)
-            return {}
-
-        if not isinstance(data, dict):
-            logger.warning("Session map file root must be an object: %s", self._session_map_path)
-            return {}
-
-        cleaned: dict[str, int] = {}
-        for key, value in data.items():
-            if not isinstance(key, str):
-                continue
-            try:
-                cleaned[key] = int(value)
-            except (TypeError, ValueError):
-                continue
-        return cleaned
-
-    def _save_session_map(self, mapping: dict[str, int]) -> None:
-        try:
-            self._session_map_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = self._session_map_path.with_suffix(self._session_map_path.suffix + ".tmp")
-            tmp_path.write_text(json.dumps(mapping, sort_keys=True), encoding="utf-8")
-            tmp_path.replace(self._session_map_path)
-        except OSError as exc:
-            logger.warning("Failed to persist session map %s: %s", self._session_map_path, exc)
+def _message_bytes(message: dict[str, str]) -> int:
+    return len(message["role"].encode("utf-8")) + len(message["content"].encode("utf-8"))
 
 
-class _NomadSessionNotFound(RuntimeError):
-    def __init__(self, session_id: int) -> None:
-        super().__init__(f"session_not_found:{session_id}")
-
-
-def _parse_json_object(body: str) -> dict[str, Any]:
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
-        logger.warning("NOMAD response was not valid JSON")
-        raise NomadUnavailable("invalid_json") from exc
-    if not isinstance(data, dict):
-        logger.warning("NOMAD response is not an object")
-        raise NomadUnavailable("invalid_shape")
-    return data
-
-
-def _limit_session_history(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+def _limit_pairs(
+    messages: list[dict[str, str]], budget: int = MAX_SESSION_HISTORY_BYTES
+) -> list[dict[str, str]]:
+    """Keep a contiguous suffix of complete turns, never orphan assistant messages."""
     selected: list[dict[str, str]] = []
-    used_bytes = 0
-    for message in reversed(messages):
-        if len(selected) >= MAX_SESSION_HISTORY_MESSAGES:
+    for end in range(len(messages), 1, -2):
+        pair = messages[end - 2:end]
+        size = sum(_message_bytes(message) for message in pair)
+        if len(selected) + 2 > MAX_SESSION_HISTORY_MESSAGES or size > budget:
             break
-        message_bytes = len(message["role"].encode("utf-8")) + len(
-            message["content"].encode("utf-8")
-        )
-        if used_bytes + message_bytes > MAX_SESSION_HISTORY_BYTES:
-            break
-        selected.append(message)
-        used_bytes += message_bytes
-    selected.reverse()
+        selected[0:0] = pair
+        budget -= size
     return selected
 
 

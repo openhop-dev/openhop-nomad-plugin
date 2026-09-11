@@ -200,7 +200,7 @@ def test_standalone_session_map_default_is_preserved(monkeypatch: pytest.MonkeyP
     assert settings.nomad_session_map_path == "./data/nomad_sessions.json"
 
 
-def test_persistent_mode_is_rejected_even_with_sender_allowlist(
+def test_memory_mode_is_accepted_with_sender_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _clean_env(monkeypatch)
@@ -214,8 +214,7 @@ def test_persistent_mode_is_rejected_even_with_sender_allowlist(
     )
     monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(data_dir))
 
-    with pytest.raises(ConfigError, match="ONE_SHOT"):
-        Settings.from_env()
+    assert Settings.from_env().one_shot is False
 
 
 @pytest.mark.parametrize(

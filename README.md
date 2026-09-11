@@ -42,19 +42,40 @@ The plugin manager should provide a persistent data directory with:
 OPENHOP_PLUGIN_DATA=/var/lib/openhop/plugins/openhop.nomad/data
 ```
 
-The plugin owns everything below that directory. By default it uses:
+The plugin reads `$OPENHOP_PLUGIN_DATA/config.json`. Conversation memory is RAM-only;
+no conversation data is written to disk. The legacy session-map setting/path is accepted
+for configuration compatibility but is not read, written, or deleted.
 
-```text
-$OPENHOP_PLUGIN_DATA/
-├── config.json
-└── nomad_sessions.json
-```
+### Optional conversation memory
 
-Persistent conversations are disabled in v0.1.3 because the upstream session lifecycle cannot
-yet be bounded safely. `one_shot` must remain `true`; the session-map setting is retained only
-for configuration compatibility.
+`one_shot: true` remains the default: every question is stateless. Uncheck **One-shot mode**
+in the UI (or set `ONE_SHOT=false`) to remember each allowed sender separately:
 
-When `OPENHOP_PLUGIN_DATA` is not set, existing standalone behaviour is preserved and the session map defaults to `./data/nomad_sessions.json`.
+- At most 10 complete question/answer pairs (20 messages), and 16,384 UTF-8 bytes
+  counting role and content, per sender. Oldest complete pairs are dropped first.
+- Each request keeps the newest question intact, removing history to fit the same
+  16,384-byte message budget. An oversized wrapped question is rejected, never truncated.
+  JSON framing/escaping and model tokenization are not included in this byte budget.
+- At most 64 conversations, evicting the least recently successfully updated sender.
+  Fixed 64 lock stripes also bound lock bookkeeping; rare hash collisions serialize
+  unrelated senders without sharing their history.
+- Memory expires 30 minutes after the last successful answer, including while idle.
+  Restarting the plugin clears all memory. These limits are fixed safety constants.
+- `/new` and `/reset` clear only the requesting sender, without inference. They use the
+  same allowlist, admission, rate limits, global concurrency and RF pacing as questions.
+  Ask/reset operations for each sender are serialized; a reset waits for an earlier ask.
+- Only successful inference adds a complete pair. Errors/cancellation add nothing.
+  An answer whose complete pair exceeds the budget is returned but clears that sender's
+  retained history. Retained answers precede radio cleaning/truncation; Companion
+  acceptance is not RF delivery, so memory does not imply the sender received an answer.
+
+Both modes POST messages to `/api/ollama/chat` **without `sessionId`**; neither creates,
+reads, or appends to NOMAD server chat sessions. This contract was checked against
+Project NOMAD `85ad2d4bcd4c91c4ffc2c7a07c832dada0a9855f`,
+`admin/app/controllers/ollama_controller.ts` and `admin/app/validators/ollama.ts`:
+chat messages are accepted directly and chat-database writes require `sessionId`.
+This does not promise that the upstream service has no other telemetry/logging.
+Existing remote sessions and local legacy maps are left untouched, not migrated or deleted.
 
 ## NOMAD Docker networking
 
@@ -128,7 +149,7 @@ built-in defaults
 ```
 
 An empty `allowed_sender_prefixes` list denies every MeshCore sender. Set it to the exact
-12-character sender prefixes that may use NOMAD. `one_shot` must remain `true`. The default
+12-character sender prefixes that may use NOMAD. `one_shot` defaults to `true`. The default
 limits permit one active request, two requests per sender per minute, and four requests
 globally per minute.
 Rejected overload and authorization traffic is dropped without an RF reply. NOMAD HTTP
@@ -192,9 +213,9 @@ Important environment overrides include:
 Install with dependencies (including the new `aiohttp` and `aiodns` requirements). Python
 3.10 and newer remain supported. The `openhop-core==1.1.1` pin is unchanged.
 Before restarting, set `allowed_sender_prefixes` to the permitted 12-hex-character sender
-prefixes and ensure `one_shot` is `true`. An empty allowlist now denies everyone and logs a
-startup warning; there is no public/open mode. Old persistent-session maps are not deleted,
-but persistent mode is rejected at startup. Existing hostname/IP URLs remain usable subject
+prefixes and choose stateless (`one_shot: true`) or bounded RAM memory (`false`). An empty
+allowlist denies everyone and logs a startup warning; there is no public/open mode.
+Old persistent-session maps are untouched and no longer used. Existing hostname/IP URLs remain usable subject
 to the origin rules above. Review the conservative request limits and global reply pacing;
 these intentionally restrict traffic compared with earlier versions. No automatic config
 migration or deployment is performed. The new Docker URL is an installation default,

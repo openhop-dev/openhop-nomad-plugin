@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 NOMAD_UNAVAILABLE_MESSAGE = "NOMAD is temporarily unavailable. Please try again."
 NOMAD_BUSY_MESSAGE = "NOMAD is busy. Please try again shortly."
 NOMAD_TOO_LONG_MESSAGE = "Message is too long for NOMAD."
-NOMAD_RESET_MESSAGE = "Started a new NOMAD session for this sender."
+NOMAD_RESET_MESSAGE = "Cleared NOMAD conversation memory for this sender."
 
 
 class DuplicateCache:
@@ -163,15 +163,6 @@ class BridgeService:
                 logger.debug("Skipping duplicate message from %s", sender_id)
                 return
 
-        if (not self._settings.one_shot) and prompt.lower() in {"/new", "/reset"}:
-            try:
-                await self._nomad.reset_session_for_sender(sender_id)
-            except NomadUnavailable:
-                await self._send_text(message.sender_prefix, NOMAD_UNAVAILABLE_MESSAGE)
-            else:
-                await self._send_text(message.sender_prefix, NOMAD_RESET_MESSAGE)
-            return
-
         if len(prompt.encode("utf-8")) > self._settings.max_prompt_bytes:
             await self._send_text(message.sender_prefix, NOMAD_TOO_LONG_MESSAGE)
             return
@@ -194,6 +185,10 @@ class BridgeService:
                 return
 
         try:
+            if prompt.lower() in {"/new", "/reset"}:
+                await self._nomad.reset_session_for_sender(sender_id)
+                await self._send_text(message.sender_prefix, NOMAD_RESET_MESSAGE)
+                return
             logger.info("Message received from %s", message.sender_prefix.hex())
             logger.info("Sending request to NOMAD")
             answer = await self._nomad.ask_for_sender(sender_id, self._build_nomad_prompt(prompt))

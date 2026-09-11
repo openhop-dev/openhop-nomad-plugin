@@ -303,8 +303,6 @@ def _validate(settings: Settings) -> None:
         raise ConfigError("MAX_REQUESTS_PER_SENDER must be <= MAX_REQUESTS_GLOBAL")
     if settings.rate_limit_window_seconds <= 0:
         raise ConfigError("RATE_LIMIT_WINDOW_SECONDS must be > 0")
-    if not settings.one_shot:
-        raise ConfigError("ONE_SHOT must be true; persistent sessions are not bounded upstream")
     if settings.busy_wait_seconds < 0:
         raise ConfigError("NOMAD_BUSY_WAIT_SECONDS must be >= 0")
 
