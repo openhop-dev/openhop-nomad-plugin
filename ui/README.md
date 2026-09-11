@@ -4,7 +4,7 @@ This dependency-free plugin page uses openHop RepeaterUI's blue/purple palette a
 
 The official Project N.O.M.A.D. artwork is bundled under `assets/`, including its pinned provenance and upstream license. Keep these files in both source and wheel distributions. The runtime image path is relative so `/plugins/openhop.nomad/` works offline.
 
-Per-option click help is deliberately limited to Bridge behavior and Radio payload limits. Native buttons support Enter/Space, expose `aria-expanded` and `aria-controls`, and dismiss on Escape, another help button, or an outside click. Help is inline rather than a clipping-prone overlay. One-shot is locked on because the runtime rejects persistent sessions.
+Per-option click help is deliberately limited to Bridge behavior and Radio payload limits. Click the setting name (subtly underlined), not a separate question-mark icon. Checkbox names open help without toggling; click the checkbox itself to change its value. The bundled logo replaces the graph icon beside the NOMAD Bridge header, not in the overview card. Native name buttons support Enter/Space, expose `aria-expanded` and `aria-controls`, and dismiss on Escape, another help button, or an outside click. Help is inline rather than a clipping-prone overlay. One-shot is locked on because the runtime rejects persistent sessions.
 
 The current settings API and restart request remain unchanged. Unknown configuration keys are retained; `_runtime` is excluded. Displayed defaults match `config.default.json`; the newer admission/rate/pacing controls are included instead of silently dropping them on save.
 

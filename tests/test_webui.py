@@ -51,6 +51,8 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         page.wait_for_function(
             "document.querySelector('#global-status').textContent.includes('Ready')"
         )
+        assert page.locator(".brand > img.nomad-logo").count() == 1
+        assert page.locator(".hero img, .brand-mark").count() == 0
         assert page.locator('img[alt="Project N.O.M.A.D."]').evaluate(
             "(img) => img.complete && img.naturalWidth > 0"
         )
@@ -82,7 +84,26 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         )
         for field in expected:
             button = page.locator(f'button[data-field="{field}"]')
+            control = page.locator(f"#{field}")
+            original = (
+                control.is_checked()
+                if field in {"one_shot", "radio_prompt_enabled"}
+                else control.input_value()
+            )
+            assert button.inner_text().strip() != "?"
+            assert control.get_attribute("aria-labelledby") == button.get_attribute("id")
+            button.click()
+            assert button.get_attribute("aria-expanded") == "true"
+            assert (
+                control.is_checked()
+                if field in {"one_shot", "radio_prompt_enabled"}
+                else control.input_value()
+            ) == original
+            page.keyboard.press("Escape")
             button.focus()
+            page.keyboard.press("Space")
+            assert button.get_attribute("aria-expanded") == "true"
+            page.keyboard.press("Escape")
             page.keyboard.press("Enter")
             assert button.get_attribute("aria-expanded") == "true"
             assert page.locator("#" + button.get_attribute("aria-controls")).is_visible()
@@ -93,6 +114,13 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         page.locator("h1").click()
         assert button.get_attribute("aria-expanded") == "false"
         assert page.locator("#one_shot").is_disabled()
+        checkbox = page.get_by_role("checkbox", name="Radio prompt enabled", exact=True)
+        original_checked = checkbox.is_checked()
+        checkbox.click()
+        assert checkbox.is_checked() != original_checked
+        checkbox.press("Space")
+        assert checkbox.is_checked() == original_checked
+        assert page.get_by_role("button", name="Max chunk bytes", exact=True).count() == 1
         page.locator("#max_chunk_bytes").fill("90")
         page.locator("button[type=submit]").click()
         page.wait_for_function(
@@ -114,6 +142,11 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                 page.set_viewport_size({"width": width, "height": 900})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}.png"), full_page=True)
+                page.get_by_role("button", name="Max chunk bytes", exact=True).click()
+                assert page.locator("#help-max_chunk_bytes").is_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(path=str(tmp_path / f"{theme}-{width}-help.png"), full_page=True)
+                page.keyboard.press("Escape")
         assert not errors
         assert not external
         browser.close()
