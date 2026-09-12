@@ -48,7 +48,7 @@ for configuration compatibility but is not read, written, or deleted.
 
 ### Optional conversation memory
 
-`one_shot: true` remains the default: every question is stateless. Uncheck **One-shot mode**
+`one_shot: false` is the default. Leave **One-shot mode** unchecked
 in the UI (or set `ONE_SHOT=false`) to remember each allowed sender separately:
 
 - At most 10 complete question/answer pairs (20 messages), and 16,384 UTF-8 bytes
@@ -121,7 +121,7 @@ Typical configuration:
   "nomad_model": "qwen2.5:3b-instruct",
   "nomad_collection": null,
   "nomad_timeout_seconds": 120,
-  "one_shot": true,
+  "one_shot": false,
   "max_concurrent_requests": 1,
   "max_pending_requests": 1,
   "max_requests_per_sender": 2,
@@ -150,7 +150,7 @@ built-in defaults
 
 An empty `allowed_sender_prefixes` list permits anyone who can DM this Companion.
 A nonempty list permits only the listed exact 12-character hexadecimal sender prefixes.
-Blank entries are ignored; a list containing only blanks also permits everyone. `one_shot` defaults to `true`. The default
+Blank entries are ignored; a list containing only blanks also permits everyone. `one_shot` defaults to `false`. The default
 limits permit one active request, two requests per sender per minute, and four requests
 globally per minute.
 Rejected overload and authorization traffic is dropped without an RF reply. NOMAD HTTP

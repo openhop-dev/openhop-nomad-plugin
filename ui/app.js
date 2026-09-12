@@ -11,7 +11,7 @@
     nomad_model: "qwen2.5:3b-instruct",
     nomad_collection: null,
     nomad_timeout_seconds: 120,
-    one_shot: true,
+    one_shot: false,
     max_concurrent_requests: 1,
     busy_wait_seconds: 5,
     max_pending_requests: 1,

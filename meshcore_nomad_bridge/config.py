@@ -64,7 +64,7 @@ class Settings:
         nomad_model = _get_required_str("NOMAD_MODEL", config)
         nomad_collection = _get_optional_str("NOMAD_COLLECTION", config)
         nomad_timeout_seconds = _get_float("NOMAD_TIMEOUT_SECONDS", 120.0, config)
-        one_shot = _get_bool("ONE_SHOT", True, config)
+        one_shot = _get_bool("ONE_SHOT", False, config)
         session_map_default = (
             str(plugin_data_dir / "nomad_sessions.json")
             if plugin_data_dir is not None

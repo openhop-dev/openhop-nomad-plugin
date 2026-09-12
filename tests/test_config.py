@@ -177,6 +177,15 @@ def test_environment_overrides_plugin_config(
     assert settings.meshcore_port == 6001
 
 
+def test_one_shot_defaults_off_and_explicit_override_works(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://localhost:8080")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    assert Settings.from_env().one_shot is False
+    monkeypatch.setenv("ONE_SHOT", "true")
+    assert Settings.from_env().one_shot is True
+
+
 def test_session_map_defaults_to_plugin_data(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
