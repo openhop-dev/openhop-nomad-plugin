@@ -209,13 +209,12 @@ Important environment overrides include:
 
 `NOMAD_URL` and `NOMAD_MODEL` must be provided by `config.json` or environment variables.
 
-## Manual Companion adverts (local test build)
+## Manual Companion adverts
 
-This local test build uses version `0.1.3+test.1`; it is not a new published release.
-The PEP 440 local-version suffix makes it newer than `0.1.3` for pip upgrades;
-`0.1.3-test.1` is not a valid Python package version. Restart the plugin after an
-authorized installation: the version label alone does not prove that the running
-process or UI assets were replaced.
+The plugin version is `0.1.3`. Replacing an existing installation of the same
+version requires an explicit reinstall; pip may otherwise keep the installed
+package. Restart the plugin after an authorized installation: the version label
+alone does not prove that the running process or UI assets were replaced.
 The buttons use the running NOMAD plugin's existing Companion TCP connection,
 not Repeater advert endpoints. Core 1.1.1 supports command 7 with flag 0
 (zero-hop) or 1 (flood), replying OK or ERR. Acceptance is not RF delivery.
@@ -269,7 +268,7 @@ network described above.
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3+test.1",
+  "version": "0.1.3",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -323,7 +322,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.3+test.1-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:
