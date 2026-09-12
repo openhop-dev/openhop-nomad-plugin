@@ -81,6 +81,9 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             "max_chunk_bytes",
             "max_prompt_bytes",
             "reply_chunk_delay_seconds",
+            "companion-auto-add",
+            "companion-overwrite",
+            "companion-path-bytes",
         }
         assert (
             set(
@@ -90,12 +93,20 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             )
             == expected
         )
+
+        def reveal(field):
+            tab = page.locator(f"#{field}").evaluate(
+                "el => el.closest('[role=tabpanel]').getAttribute('aria-labelledby')"
+            )
+            page.locator("#" + tab).click()
+
         for field in expected:
+            reveal(field)
             button = page.locator(f'button[data-field="{field}"]')
             control = page.locator(f"#{field}")
             original = (
                 control.is_checked()
-                if field in {"one_shot", "radio_prompt_enabled"}
+                if field in {"one_shot", "radio_prompt_enabled", "companion-overwrite"}
                 else control.input_value()
             )
             assert button.inner_text().strip() != "?"
@@ -107,7 +118,7 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             assert button.get_attribute("aria-expanded") == "true"
             assert (
                 control.is_checked()
-                if field in {"one_shot", "radio_prompt_enabled"}
+                if field in {"one_shot", "radio_prompt_enabled", "companion-overwrite"}
                 else control.input_value()
             ) == original
             page.keyboard.press("Escape")
@@ -129,11 +140,13 @@ def test_browser_config_help_and_offline_assets(tmp_path):
             "entries are ignored. Only senders who can DM this Companion can use "
             "the bridge; rate limits still apply."
         )
+        reveal("max_chunk_bytes")
         button = page.locator('button[data-field="max_chunk_bytes"]')
         button.click()
         page.locator("h1").click()
         assert button.get_attribute("aria-expanded") == "false"
         assert page.locator("#one_shot").is_enabled()
+        reveal("one_shot")
         page.locator("#one_shot").uncheck()
         checkbox = page.get_by_role("checkbox", name="Radio prompt enabled", exact=True)
         original_checked = checkbox.is_checked()
@@ -141,6 +154,7 @@ def test_browser_config_help_and_offline_assets(tmp_path):
         assert checkbox.is_checked() != original_checked
         checkbox.press("Space")
         assert checkbox.is_checked() == original_checked
+        reveal("max_chunk_bytes")
         assert page.get_by_role("button", name="Max chunk bytes", exact=True).count() == 1
         page.locator("#max_chunk_bytes").fill("90")
         page.locator("button[type=submit]").click()
@@ -165,12 +179,14 @@ def test_browser_config_help_and_offline_assets(tmp_path):
                 page.set_viewport_size({"width": width, "height": 900})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}.png"), full_page=True)
+                reveal("nomad_url")
                 page.get_by_role("button", name="NOMAD URL", exact=True).click()
                 assert page.locator("#help-nomad_url").is_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(tmp_path / f"{theme}-{width}-help.png"), full_page=True)
                 page.keyboard.press("Escape")
-                page.locator('#label-allowed_sender_prefixes').click()
+                reveal("allowed_sender_prefixes")
+                page.locator("#label-allowed_sender_prefixes").click()
                 assert allowlist_help.is_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(

@@ -193,6 +193,12 @@ class MeshCoreClient:
         finally:
             self._command_lock.release()
 
+    async def companion_settings(self, patch: dict, *, may_send=None) -> dict:
+        """Read or explicitly apply preferences using this connection only."""
+        from .companion_settings import operate
+
+        return await operate(self, patch, may_send=may_send)
+
     async def send_text(self, recipient_prefix: bytes, text: str) -> bool:
         if len(recipient_prefix) < 6:
             raise ValueError("recipient_prefix must contain at least 6 bytes")

@@ -15,6 +15,8 @@ import secrets
 import time
 from pathlib import Path
 
+from .companion_control import CompanionControl
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +26,7 @@ class AdvertControl:
         self.meshcore = meshcore
         self.endpoint = endpoint
         self.result = None
+        self.companion = CompanionControl(data_dir, meshcore, endpoint)
         self._rotate()
 
     def _rotate(self):
@@ -32,6 +35,7 @@ class AdvertControl:
 
     def _publish(self):
         snapshot = {
+            "companion": self.companion.snapshot(),
             "advert": {
                 "token": self.token,
                 "updated_at": time.time(),
@@ -58,6 +62,7 @@ class AdvertControl:
         return config.get("advert_request") if isinstance(config, dict) else None
 
     async def tick(self):
+        await self.companion.tick(self._publish)
         if time.monotonic() >= self.deadline:
             self._rotate()
         request = self._request()

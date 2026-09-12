@@ -78,6 +78,9 @@
     return response;
   }
 
+  let companionBusy = false;
+  let companionReady = false;
+  let companionEndpoint = null;
   let advertBusy = false;
   function advertButtons(disabled) {
     $("advert-zero").disabled = disabled;
@@ -86,18 +89,19 @@
   async function advertRuntime() {
     const response = await apiFetch(`/api/plugins/runtime?id=${encodeURIComponent(PLUGIN_ID)}`);
     if (!response.ok) throw new Error("Advert controls unavailable: running plugin runtime API is required.");
-    const state = (await response.json()).runtime?.advert;
+    const runtime = (await response.json()).runtime;
+    const state = runtime?.advert;
     if (!state || !state.connected || !Number.isFinite(state.updated_at) || typeof state.token !== "string" || !/^[a-f0-9]{64}$/.test(state.token) || Math.abs(Date.now() / 1000 - state.updated_at) > (state.result?.status === "pending" ? 20 : 5)) {
       throw new Error("Advert controls unavailable: plugin stopped, disconnected, or runtime stale.");
     }
-    return state;
+    return { ...state, otherPending: runtime.companion?.result?.status === "pending" };
   }
   async function refreshAdverts() {
     if (advertBusy) return;
     try {
       const state = await advertRuntime();
       if (advertBusy) return;
-      advertButtons(state.result?.status === "pending");
+      advertButtons(companionBusy || state.otherPending || state.result?.status === "pending");
       if (!$("advert-status").dataset.result) $("advert-status").textContent = `Running Companion: ${state.endpoint}`;
     } catch (error) {
       if (advertBusy) return;
@@ -106,7 +110,7 @@
     }
   }
   async function sendAdvert(mode) {
-    if (advertBusy) return;
+    if (advertBusy || companionBusy) return;
     advertBusy = true;
     advertButtons(true);
     $("advert-status").dataset.result = "true";
@@ -114,7 +118,7 @@
     try {
       const config = await fetchConfig();
       const state = await advertRuntime();
-      if (state.result?.status === "pending") throw new Error("Another advert is pending; wait for its result.");
+      if (state.otherPending || state.result?.status === "pending") throw new Error("Another Companion action is pending; wait for its result.");
       const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
       const response = await apiFetch(API, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -146,6 +150,103 @@
   setInterval(refreshAdverts, 2000);
   refreshAdverts();
 
+  function companionButtons(disabled) {
+    $("companion-read").disabled = disabled;
+    $("companion-apply").disabled = disabled || !companionReady;
+    ["companion-auto-add", "companion-overwrite", "companion-path-bytes"].forEach(id => {
+      $(id).disabled = disabled || !companionReady;
+    });
+  }
+  async function companionRuntime() {
+    const response = await apiFetch(`/api/plugins/runtime?id=${encodeURIComponent(PLUGIN_ID)}`);
+    if (!response.ok) throw new Error("Companion controls unavailable: running plugin runtime API is required.");
+    const runtime = (await response.json()).runtime;
+    const state = runtime?.companion;
+    if (!state || !state.connected || !Number.isFinite(state.updated_at) || typeof state.token !== "string" || !/^[a-f0-9]{64}$/.test(state.token) || Math.abs(Date.now() / 1000 - state.updated_at) > (state.result?.status === "pending" ? 20 : 5)) {
+      throw new Error("Companion controls unavailable: stopped, disconnected, or runtime stale.");
+    }
+    return { ...state, otherPending: runtime.advert?.result?.status === "pending" };
+  }
+  async function refreshCompanion() {
+    if (companionBusy) return;
+    try {
+      const state = await companionRuntime();
+      if (companionBusy) return;
+      if (companionEndpoint !== state.endpoint || !state.result) companionReady = false;
+      companionButtons(advertBusy || state.otherPending || state.result?.status === "pending");
+      if (!$("companion-status").dataset.result) $("companion-status").textContent = `Running Companion: ${state.endpoint}. Read current settings first.`;
+    } catch (error) {
+      if (companionBusy) return;
+      companionReady = false;
+      companionButtons(true);
+      if (!$("companion-status").dataset.result) $("companion-status").textContent = error.message;
+    }
+  }
+  function populateCompanion(values) {
+    if (!values || !["all", "none", "selected"].includes(values.auto_add) || typeof values.overwrite_oldest !== "boolean" || ![1, 2, 3].includes(values.path_hash_bytes)) {
+      throw new Error("Companion returned incomplete settings; read again.");
+    }
+    $("companion-auto-add").options[0].textContent = values.auto_add === "selected" ? "Selected (keep unchanged)" : "Keep current mode";
+    $("companion-auto-add").value = values.auto_add === "selected" ? "" : values.auto_add;
+    $("companion-overwrite").checked = values.overwrite_oldest;
+    $("companion-path-bytes").value = String(values.path_hash_bytes);
+  }
+  async function companionAction(apply) {
+    if (companionBusy || advertBusy || (apply && !companionReady)) return;
+    const patch = {};
+    if (apply) {
+      const auto = $("companion-auto-add").value;
+      if (auto) patch.auto_add = auto;
+      patch.overwrite_oldest = $("companion-overwrite").checked;
+      patch.path_hash_bytes = Number($("companion-path-bytes").value);
+    }
+    companionBusy = true;
+    companionButtons(true);
+    advertButtons(true);
+    $("companion-status").dataset.result = "true";
+    $("companion-status").textContent = "Submitting Companion request…";
+    try {
+      const config = await fetchConfig(); // preserve fresh saved fields, never unsaved form values
+      const state = await companionRuntime();
+      if (state.otherPending || state.result?.status === "pending") throw new Error("Another Companion action is pending; wait for its result.");
+      if (apply && (companionEndpoint !== state.endpoint || !state.result)) throw new Error("Companion changed; read settings again first.");
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      const response = await apiFetch(API, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: PLUGIN_ID, restart: false,
+          config: { ...stripRuntime(config), companion_request: { id, token: state.token, patch } } })
+      });
+      if (!response.ok) throw new Error("Submission not confirmed. Do not automatically retry.");
+      companionReady = false;
+      $("companion-status").textContent = "Waiting for Companion read-back…";
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const current = await companionRuntime();
+        const result = current.result;
+        if (result?.id !== id || result.status === "pending") continue;
+        if (result.status !== "verified") throw new Error(`Companion ${result.status}. Changes may be partial; read again before retrying.`);
+        populateCompanion(result.values);
+        companionEndpoint = current.endpoint;
+        companionReady = true;
+        $("companion-status").textContent = `Settings read back from Companion: ${current.endpoint}${apply ? "; requested changes verified." : "."}`;
+        return;
+      }
+      throw new Error("Companion outcome unknown or request expired. Read again; do not automatically retry.");
+    } catch (error) {
+      companionReady = false;
+      $("companion-status").textContent = error.message;
+    } finally {
+      companionBusy = false;
+      await refreshCompanion();
+      await refreshAdverts();
+    }
+  }
+  $("companion-read").addEventListener("click", () => companionAction(false));
+  $("companion-apply").addEventListener("click", () => companionAction(true));
+  setInterval(refreshCompanion, 2000);
+  refreshCompanion();
+
   function configFromResponse(payload) {
     if (payload && typeof payload === "object" && payload.config && typeof payload.config === "object") {
       return payload.config;
@@ -157,6 +258,7 @@
     const clean = { ...config };
     delete clean._runtime;
     delete clean.advert_request;
+    delete clean.companion_request;
     return clean;
   }
 
@@ -369,5 +471,34 @@
   document.addEventListener("click", event => {
     if (!event.target.closest(".help-button, .field-help")) closeHelp();
   });
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  function selectTab(tab, focus = false) {
+    closeHelp();
+    tabs.forEach(item => {
+      const active = item === tab;
+      item.setAttribute("aria-selected", String(active));
+      item.tabIndex = active ? 0 : -1;
+      $(item.getAttribute("aria-controls")).hidden = !active;
+    });
+    if (focus) tab.focus();
+  }
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => selectTab(tab));
+    tab.addEventListener("keydown", event => {
+      let next;
+      if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+      else if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      selectTab(tabs[next], true);
+    });
+  });
+  // Native validation must reveal an invalid field on a hidden tab.
+  $("settings-form").addEventListener("invalid", event => {
+    const panel = event.target.closest('[role="tabpanel"]');
+    if (panel) selectTab($(panel.getAttribute("aria-labelledby")));
+  }, true);
   loadConfig(true);
 })();

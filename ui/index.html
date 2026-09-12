@@ -56,7 +56,14 @@
           </div>
         </div>
 
-        <section class="card settings-section">
+        <div class="settings-tabs" role="tablist" aria-label="Settings categories">
+          <button type="button" role="tab" id="tab-connectivity" aria-controls="panel-connectivity" aria-selected="true" tabindex="0">Connectivity</button>
+          <button type="button" role="tab" id="tab-behavior" aria-controls="panel-behavior" aria-selected="false" tabindex="-1">Behavior &amp; access</button>
+          <button type="button" role="tab" id="tab-replies" aria-controls="panel-replies" aria-selected="false" tabindex="-1">Replies</button>
+          <button type="button" role="tab" id="tab-companion" aria-controls="panel-companion" aria-selected="false" tabindex="-1">Companion device</button>
+        </div>
+
+        <section id="panel-connectivity" role="tabpanel" aria-labelledby="tab-connectivity" class="card settings-section">
           <div class="settings-section-heading">
             <div>
               <h3>Connectivity</h3>
@@ -74,7 +81,7 @@
           </div>
         </section>
 
-        <section class="card settings-section">
+        <section id="panel-behavior" role="tabpanel" aria-labelledby="tab-behavior" class="card settings-section" hidden>
           <div class="settings-section-heading">
             <div>
               <h3>Bridge behavior</h3>
@@ -113,7 +120,7 @@
           </div>
         </section>
 
-        <section class="card settings-section">
+        <section id="panel-replies" role="tabpanel" aria-labelledby="tab-replies" class="card settings-section" hidden>
           <div class="settings-section-heading">
             <div>
               <h3>Radio payload limits</h3>
@@ -130,6 +137,21 @@
             <div class="field "><button id="label-max_prompt_bytes" type="button" class="help-button" data-field="max_prompt_bytes" aria-expanded="false" aria-controls="help-max_prompt_bytes">Max prompt bytes <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_prompt_bytes" aria-labelledby="label-max_prompt_bytes" aria-describedby="help-max_prompt_bytes" type="number" min="128" max="8192">
             <p class="field-help" id="help-max_prompt_bytes" hidden>Default: 1000 UTF-8 bytes. Maximum incoming question size before the radio prompt template is added. Oversized questions receive a short error instead of being sent to NOMAD.</p></div>
           </div>
+        </section>
+        <section id="panel-companion" role="tabpanel" aria-labelledby="tab-companion" class="card settings-section" hidden>
+          <h3>Companion device settings</h3>
+          <p class="muted">Read or apply settings on the running Companion connection. This is separate from Save and restart; unsaved connection fields above are not used. Changes affect the Companion identity, including other apps using it.</p>
+          <div class="form-grid three">
+            <div class="field"><button id="label-companion-auto-add" type="button" class="help-button" data-field="companion-auto-add" aria-expanded="false" aria-controls="help-companion-auto-add">Auto Add <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="companion-auto-add" aria-labelledby="label-companion-auto-add" aria-describedby="help-companion-auto-add" disabled><option value="">Read current settings first</option><option value="all">All</option><option value="none">None</option></select><p class="field-help" id="help-companion-auto-add" hidden>All automatically adds all contact types. None disables automatic contact addition, not direct messages or bridge access. Existing Selected mode is kept until you explicitly choose All or None. None clears the selected type bits; All retains them for other apps. No existing contacts are deleted.</p></div>
+            <div class="field"><div class="check-card"><input id="companion-overwrite" type="checkbox" aria-labelledby="label-companion-overwrite" aria-describedby="help-companion-overwrite" disabled><button id="label-companion-overwrite" type="button" class="help-button" data-field="companion-overwrite" aria-expanded="false" aria-controls="help-companion-overwrite">Overwrite Oldest <span class="help-indicator" aria-hidden="true">(i)</span></button></div><p class="field-help" id="help-companion-overwrite" hidden>Allow the Companion to replace its oldest eligible contact when its contact table is full. This changes the overwrite flag only; other flags and any maximum-hop limit are preserved.</p></div>
+            <div class="field"><button id="label-companion-path-bytes" type="button" class="help-button" data-field="companion-path-bytes" aria-expanded="false" aria-controls="help-companion-path-bytes">Path hash bytes <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="companion-path-bytes" aria-labelledby="label-companion-path-bytes" aria-describedby="help-companion-path-bytes" disabled><option value="">Read current settings first</option><option value="1">1 byte</option><option value="2">2 bytes</option><option value="3">3 bytes</option></select><p class="field-help" id="help-companion-path-bytes" hidden>Companion path hash width: 1, 2 or 3 bytes per hop (protocol modes 0, 1 or 2). This is not message chunk size. Wider hashes reduce collisions but use more path space. Requires a Companion that reports and supports this mode.</p></div>
+          </div>
+          <div class="settings-actions nested">
+            <button id="companion-read" class="button ghost" type="button" disabled>Read from Companion</button>
+            <button id="companion-apply" class="button primary" type="button" disabled>Apply to Companion</button>
+          </div>
+          <p id="companion-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
+          <p class="muted">Apply reads current preferences, preserves unrelated values, then verifies by reading back. Multi-command changes are not atomic. If partial or unknown, read again before deciding what to change; no automatic retry or rollback.</p>
         </section>
       </form>
     </main>

@@ -313,6 +313,37 @@ export ALLOWED_SENDER_PREFIXES=001122334455  # replace with the permitted sender
 meshcore-nomad-bridge
 ```
 
+## Companion device controls and settings tabs
+
+The configuration UI groups settings into Connectivity, Behavior & access,
+Replies, and Companion device tabs. Switching tabs preserves unsaved edits.
+Use Tab to reach the tab list, Left/Right to switch, and Home/End for the first
+or last tab; the tab buttons wrap on narrow screens.
+
+In **Companion device**, first select **Read from Companion**, then choose
+**Auto Add All or None**, **Overwrite Oldest**, and **Path hash bytes 1, 2, or 3**.
+**Apply to Companion** changes the identity on the plugin's currently running
+TCP connection, not the unsaved host/port fields. These are device operations,
+not plugin configuration defaults; they do not restart the plugin. Normal
+**Save and restart** saves bridge fields across all tabs, not these controls.
+Existing Selected contact policies are retained unless All/None is explicitly
+chosen. None clears selected contact-type bits but does not delete contacts or
+restrict who can DM the bridge. Overwrite permits eligible old contacts to be
+replaced when the table fills. Path width is per-hop hash size, not reply size.
+
+The plugin uses its existing authenticated manager settings/runtime mailbox,
+with process-scoped, expiring one-use requests and the shared command lock.
+It reads preferences before modifying them, preserves unrelated flags, telemetry,
+location, ACK and optional hop-limit values, and reads them back before reporting
+verified success. No extra socket, dependency-pin change, startup preference
+write, automatic retry, or rollback is introduced. Unsupported/disconnected or
+stale runtimes disable controls. Partial, rejected, mismatched or unknown outcomes
+are not success: read again before deciding whether to retry. Multi-command
+updates are not atomic and affect other apps using the same Companion identity.
+Manager settings writes replace whole documents without compare-and-swap;
+avoid concurrent editors, saves, or device actions. Runtime polling does not
+replace unsaved form values. Hardware/RF behavior requires separate validation.
+
 ## Testing
 
 ```bash
