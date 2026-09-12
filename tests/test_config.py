@@ -177,6 +177,21 @@ def test_environment_overrides_plugin_config(
     assert settings.meshcore_port == 6001
 
 
+def test_radio_prompt_defaults_are_concise_and_consistent(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NOMAD_URL", "http://localhost:8080")
+    monkeypatch.setenv("NOMAD_MODEL", "test-model")
+    root = Path(__file__).resolve().parents[1]
+    defaults = json.loads((root / "config.default.json").read_text())
+    manifest = json.loads((root / "openhop-plugin.json").read_text())
+    prompt = defaults["radio_prompt_template"]
+    assert "250 characters" in prompt
+    assert "no Markdown" in prompt
+    assert "Do not invent" in prompt
+    assert Settings.from_env().radio_prompt_template == prompt
+    assert manifest["config"]["defaults"]["radio_prompt_template"] == prompt
+
+
 def test_one_shot_defaults_off_and_explicit_override_works(monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("NOMAD_URL", "http://localhost:8080")

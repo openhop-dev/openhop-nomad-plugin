@@ -18,6 +18,14 @@ def clean_for_radio(text: str) -> str:
     cleaned = _CODE_FENCE_RE.sub(" ", cleaned)
     cleaned = _TABLE_LINE_RE.sub(" ", cleaned)
     cleaned = _HEADING_RE.sub("", cleaned)
+    # Strip paired inline formatting, not literal arithmetic or identifier underscores.
+    for marker in ("**", "__", "*", "_", "`"):
+        escaped = re.escape(marker)
+        cleaned = re.sub(
+            rf"(?<!\w){escaped}(\S(?:[^\n]*?\S)?){escaped}(?!\w)",
+            r"\1",
+            cleaned,
+        )
     cleaned = cleaned.replace("\r\n", "\n")
     cleaned = _MULTISPACE_RE.sub(" ", cleaned)
     cleaned = _MULTI_NEWLINE_RE.sub("\n\n", cleaned)
@@ -45,11 +53,17 @@ def split_for_meshcore(text: str, *, max_bytes: int, max_chunks: int) -> list[st
     if len(pieces) < max_chunks:
         pieces.extend([""] * (max_chunks - len(pieces)))
 
-    final_notice = "...response shortened for MeshCore."
-    tail_limit = capacities[-1]
-    pieces = pieces[: max_chunks - 1]
-    pieces.append(_truncate_to_bytes(final_notice, tail_limit))
-
+    marker = "." * min(3, capacities[-1])
+    tail_limit = capacities[-1] - len(marker)
+    tail = _truncate_to_bytes(pieces[-1], tail_limit).rstrip() if tail_limit else ""
+    # Avoid ending on a partial word when there is a reasonable nearby boundary.
+    if len(pieces[-1].encode("utf-8")) > tail_limit and " " in tail:
+        boundary = tail.rfind(" ")
+        if len(tail[:boundary].encode("utf-8")) >= tail_limit * 0.8:
+            tail = tail[:boundary]
+    pieces[-1] = tail.rstrip(" .") + marker
+    if max_chunks == 1:
+        return pieces
     return [f"[{idx}/{max_chunks}] {piece}" for idx, piece in enumerate(pieces, start=1)]
 
 
@@ -106,14 +120,19 @@ def _utf8_hard_cut_index(text: str, limit: int) -> int:
 
 
 def _best_split_point(prefix: str) -> int:
+    # Natural boundaries are useful only when they do not waste most of a packet.
+    minimum = len(prefix.encode("utf-8")) * 0.8
     paragraph = prefix.rfind("\n\n")
-    if paragraph > 0:
+    if paragraph > 0 and len(prefix[:paragraph].encode("utf-8")) >= minimum:
         return paragraph
 
     sentence_break = 0
     for match in _SENTENCE_BREAK_RE.finditer(prefix):
+        before = prefix[: match.start()]
+        if re.search(r"(?:^|\s)\d+\.$", before):
+            continue
         sentence_break = match.end()
-    if sentence_break > 0:
+    if sentence_break > 0 and len(prefix[:sentence_break].encode("utf-8")) >= minimum:
         return sentence_break
 
     space = prefix.rfind(" ")

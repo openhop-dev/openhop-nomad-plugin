@@ -70,9 +70,7 @@ class Settings:
             if plugin_data_dir is not None
             else "./data/nomad_sessions.json"
         )
-        nomad_session_map_path = _get_str(
-            "NOMAD_SESSION_MAP_PATH", session_map_default, config
-        )
+        nomad_session_map_path = _get_str("NOMAD_SESSION_MAP_PATH", session_map_default, config)
 
         max_concurrent_requests = _get_int("MAX_CONCURRENT_REQUESTS", 1, config)
         max_pending_requests = _get_int("MAX_PENDING_REQUESTS", 1, config)
@@ -90,14 +88,7 @@ class Settings:
         radio_prompt_enabled = _get_bool("RADIO_PROMPT_ENABLED", True, config)
         radio_prompt_template = _get_str(
             "RADIO_PROMPT_TEMPLATE",
-            "You are answering a question received over a low-bandwidth MeshCore radio network.\\n"
-            "Give the most useful answer first.\\n"
-            "Be concise.\\n"
-            "Use plain text.\\n"
-            "Do not use Markdown tables.\\n"
-            "Avoid unnecessary introductions.\\n"
-            "Aim for fewer than 400 characters when practical.\\n\\n"
-            "User question:\\n{question}",
+            "You are a local AI assistant running through Project NOMAD, answering over MeshCore radio. Use relevant knowledge-base material supplied with the request. Only claim a specific guide, document, or file is available when that material confirms it.\nGive the direct answer first in one short paragraph, ideally under 250 characters.\nUse plain text only: no Markdown, bold, italics, headings, tables, or numbered lists.\nOmit introductions, repeated questions, and filler. For procedures, give only the essential steps in short sentences.\nPrefer common words and simple punctuation. Do not sacrifice accuracy or essential safety details to shorten the answer.\nDo not invent names, sources, URLs, or access instructions. If unsure, say so briefly or ask one short clarifying question.\n\nUser question:\n{question}",
             config,
         )
 
@@ -275,7 +266,9 @@ def _validate(settings: Settings) -> None:
         if port is not None and not 1 <= port <= 65535:
             raise ValueError
     except ValueError as exc:
-        raise ConfigError("NOMAD_URL must be a valid HTTP(S) origin with a hostname or IP address") from exc
+        raise ConfigError(
+            "NOMAD_URL must be a valid HTTP(S) origin with a hostname or IP address"
+        ) from exc
     if not settings.nomad_session_map_path:
         raise ConfigError("NOMAD_SESSION_MAP_PATH must not be empty")
 
@@ -323,8 +316,7 @@ def _validate(settings: Settings) -> None:
     invalid_fields = [
         field_name
         for _, field_name, format_spec, conversion in parsed_template
-        if field_name is not None
-        and (format_spec or conversion or field_name != "question")
+        if field_name is not None and (format_spec or conversion or field_name != "question")
     ]
     if "question" not in fields or invalid_fields:
         raise ConfigError("RADIO_PROMPT_TEMPLATE must contain only the {question} field")

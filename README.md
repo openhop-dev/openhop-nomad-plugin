@@ -46,6 +46,21 @@ The plugin reads `$OPENHOP_PLUGIN_DATA/config.json`. Conversation memory is RAM-
 no conversation data is written to disk. The legacy session-map setting/path is accepted
 for configuration compatibility but is not read, written, or deleted.
 
+### Radio answer formatting
+
+The default radio prompt asks for a direct, plain-text answer in one short paragraph,
+ideally under 250 characters, without Markdown or numbered lists. It asks the model
+not to invent sources or access instructions; accuracy and essential safety details
+still take priority. This is guidance, not a guarantee of model output length or accuracy.
+Existing saved/custom prompt templates are preserved: update the Radio prompt template
+setting to adopt the new wording on an existing installation.
+
+Inline bold/italic/code markers are removed before splitting. Sentence and paragraph
+boundaries are preferred only when they fill at least 80% of the available text window;
+otherwise splitting falls back to a word boundary. Multipart labels remain inside the
+configured UTF-8 byte limit. When the maximum chunk count is reached, the last chunk
+keeps answer text and ends with `...` instead of being replaced by a notice-only packet.
+
 ### Optional conversation memory
 
 `one_shot: false` is the default. Leave **One-shot mode** unchecked
