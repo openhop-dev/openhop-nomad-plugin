@@ -23,6 +23,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e '.[dev]' build
+      - name: Install browser test dependencies (Python 3.12 only)
+        if: matrix.python == '3.12'
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install --with-deps chromium
       - run: python -m pytest
       # Explicit correctness rules: do not inherit developer-machine lint defaults.
       - if: matrix.python == '3.12'
