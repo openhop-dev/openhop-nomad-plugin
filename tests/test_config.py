@@ -38,6 +38,47 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+@pytest.mark.parametrize("use_env", [False, True])
+def test_legacy_missing_limits_follow_existing_values(monkeypatch, tmp_path, use_env):
+    _clean_env(monkeypatch)
+    values: dict[str, object] = dict(
+        nomad_url="http://nomad_admin:8080",
+        nomad_model="test",
+        future={"preserve": True},
+        one_shot=True,
+    )
+    if not use_env:
+        values.update(max_concurrent_requests=3, max_requests_per_sender=7)
+    _write_config(tmp_path, **values)
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+    if use_env:
+        monkeypatch.setenv("MAX_CONCURRENT_REQUESTS", "3")
+        monkeypatch.setenv("MAX_REQUESTS_PER_SENDER", "7")
+    before = (tmp_path / "config.json").read_bytes()
+    settings = Settings.from_env()
+    assert settings.max_pending_requests == 3
+    assert settings.max_requests_global == 7
+    assert settings.one_shot is True
+    assert (tmp_path / "config.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("use_env", [False, True])
+def test_explicit_conflicting_limits_are_not_silently_repaired(monkeypatch, tmp_path, use_env):
+    _clean_env(monkeypatch)
+    _write_config(
+        tmp_path,
+        nomad_url="http://nomad_admin:8080",
+        nomad_model="test",
+        max_concurrent_requests=3,
+        **({} if use_env else {"max_pending_requests": 1}),
+    )
+    monkeypatch.setenv("OPENHOP_PLUGIN_DATA", str(tmp_path))
+    if use_env:
+        monkeypatch.setenv("MAX_PENDING_REQUESTS", "1")
+    with pytest.raises(ConfigError, match="MAX_PENDING_REQUESTS"):
+        Settings.from_env()
+
+
 def _write_config(path: Path, **values: object) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "config.json").write_text(json.dumps(values), encoding="utf-8")

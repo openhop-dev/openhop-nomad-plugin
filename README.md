@@ -155,6 +155,14 @@ Typical configuration:
 }
 ```
 
+Older configurations may omit newer limits. When absent, `max_pending_requests`
+defaults to at least `max_concurrent_requests`, and `max_requests_global` defaults
+to at least `max_requests_per_sender` (with a minimum default of 4). Explicit
+values still take precedence and inconsistent limits produce a validation error.
+Loading never rewrites `config.json`; the UI presents compatible defaults and
+persists them only when you intentionally save. Existing endpoints, access lists,
+one-shot choices, and unknown settings are preserved.
+
 Configuration precedence is:
 
 ```text
@@ -226,7 +234,7 @@ Important environment overrides include:
 
 ## Manual Companion adverts
 
-The plugin version is `0.1.3`. Replacing an existing installation of the same
+The plugin version is `0.1.3+test.2`. Replacing an existing installation of the same
 version requires an explicit reinstall; pip may otherwise keep the installed
 package. Restart the plugin after an authorized installation: the version label
 alone does not prove that the running process or UI assets were replaced.
@@ -283,7 +291,7 @@ network described above.
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3",
+  "version": "0.1.3+test.2",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -368,7 +376,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.3+test.2-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

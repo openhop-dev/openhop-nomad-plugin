@@ -73,9 +73,13 @@ class Settings:
         nomad_session_map_path = _get_str("NOMAD_SESSION_MAP_PATH", session_map_default, config)
 
         max_concurrent_requests = _get_int("MAX_CONCURRENT_REQUESTS", 1, config)
-        max_pending_requests = _get_int("MAX_PENDING_REQUESTS", 1, config)
+        max_pending_requests = _get_int(
+            "MAX_PENDING_REQUESTS", max(1, max_concurrent_requests), config
+        )
         max_requests_per_sender = _get_int("MAX_REQUESTS_PER_SENDER", 2, config)
-        max_requests_global = _get_int("MAX_REQUESTS_GLOBAL", 4, config)
+        max_requests_global = _get_int(
+            "MAX_REQUESTS_GLOBAL", max(4, max_requests_per_sender), config
+        )
         rate_limit_window_seconds = _get_float("RATE_LIMIT_WINDOW_SECONDS", 60.0, config)
         allowed_sender_prefixes = _get_sender_prefixes("ALLOWED_SENDER_PREFIXES", config)
         busy_wait_seconds = _get_float("NOMAD_BUSY_WAIT_SECONDS", 5.0, config)

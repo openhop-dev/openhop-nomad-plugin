@@ -263,7 +263,15 @@
   }
 
   function supportedConfig(config) {
-    return stripRuntime(config);
+    const clean = stripRuntime(config);
+    // Match runtime defaults for legacy configs without rewriting anything on load.
+    if (!("max_pending_requests" in clean)) {
+      clean.max_pending_requests = Math.max(1, Number(clean.max_concurrent_requests ?? defaults.max_concurrent_requests));
+    }
+    if (!("max_requests_global" in clean)) {
+      clean.max_requests_global = Math.max(4, Number(clean.max_requests_per_sender ?? defaults.max_requests_per_sender));
+    }
+    return clean;
   }
 
   async function fetchConfig() {

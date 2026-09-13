@@ -12,7 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_tabs_and_companion_controls(tmp_path):
     sync = pytest.importorskip("playwright.sync_api")
     config = json.loads((ROOT / "config.default.json").read_text())
-    config.update(future={"keep": True}, _runtime={"ignore": True})
+    config.update(
+        future={"keep": True},
+        _runtime={"ignore": True},
+        max_concurrent_requests=3,
+        max_requests_per_sender=7,
+    )
+    config.pop("max_pending_requests")
+    config.pop("max_requests_global")
     posts, errors = [], []
     values = {"auto_add": "selected", "overwrite_oldest": False, "path_hash_bytes": 2}
     runtime = {"token": "a" * 64, "connected": True, "endpoint": "running:5050", "result": None}
@@ -112,6 +119,8 @@ def test_tabs_and_companion_controls(tmp_path):
         assert posts[-1]["config"]["nomad_model"] == "unsaved-model"
         assert posts[-1]["config"]["one_shot"] is True
         assert posts[-1]["config"]["max_chunk_bytes"] == 91
+        assert posts[-1]["config"]["max_pending_requests"] == 3
+        assert posts[-1]["config"]["max_requests_global"] == 7
         assert "companion_request" not in posts[-1]["config"]
         page.reload()
         page.wait_for_function(
@@ -128,6 +137,15 @@ def test_tabs_and_companion_controls(tmp_path):
                     tab.click()
                     assert page.get_by_role("tabpanel").count() == 1
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                # Labels and controls share a consistent row, including the checkbox.
+                auto = page.locator("#companion-auto-add").bounding_box()
+                overwrite = page.locator("#panel-companion .check-card").bounding_box()
+                path = page.locator("#companion-path-bytes").bounding_box()
+                assert abs(auto["height"] - overwrite["height"]) <= 1
+                if width > 650:
+                    assert abs(auto["y"] - overwrite["y"]) <= 1
+                if width > 940:
+                    assert abs(auto["y"] - path["y"]) <= 1
                 page.screenshot(
                     path=str(tmp_path / f"companion-{theme}-{width}.png"), full_page=True
                 )

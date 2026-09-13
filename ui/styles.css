@@ -149,6 +149,10 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .field > small { display: block; margin-top: 6px; color: var(--muted); font-size: .78rem; }
 .field .check-card { min-height: 48px; cursor: default; }
 .field .check-card input { flex-shrink: 0; cursor: pointer; }
+#panel-companion .field > select,
+#panel-companion .field > .check-card { height: 48px; margin-top: 6px; }
+#panel-companion .field > .check-card { cursor: pointer; background: var(--panel-strong); border-color: var(--line-strong); }
+#panel-companion .settings-actions { flex-wrap: wrap; }
 .help-button { appearance: none; display: inline-block; max-width: 100%; min-height: 28px; padding: 3px 0; border: 0; background: transparent; color: var(--text); text-align: left; font-size: .78rem; font-weight: 650; cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 4px; }
 .help-indicator { display: inline-block; margin-left: .25em; color: var(--muted); font-size: .9em; font-weight: 500; text-decoration: none; white-space: nowrap; }
 .help-button:hover, .help-button[aria-expanded="true"] { color: var(--accent); text-decoration-style: solid; }
