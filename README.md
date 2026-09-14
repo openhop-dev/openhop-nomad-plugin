@@ -234,7 +234,7 @@ Important environment overrides include:
 
 ## Manual Companion adverts
 
-The plugin version is `0.1.3+test9`. Replacing an existing installation of the same
+The plugin version is `0.1.3`. Replacing an existing installation of the same
 version requires an explicit reinstall; pip may otherwise keep the installed
 package. Restart the plugin after an authorized installation: the version label
 alone does not prove that the running process or UI assets were replaced.
@@ -291,7 +291,7 @@ network described above.
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3+test9",
+  "version": "0.1.3",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -376,7 +376,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.3+test9-py3-none-any.whl
+dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:
