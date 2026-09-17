@@ -11,7 +11,8 @@ from meshcore_nomad_bridge.meshcore_client import MeshCoreClient
 
 
 @pytest.mark.asyncio
-async def test_send_text_retries_after_timeout_and_logs_ack() -> None:
+async def test_send_text_retries_after_timeout_and_logs_acceptance(caplog) -> None:
+    caplog.set_level("INFO")
     client = MeshCoreClient(host="127.0.0.1", port=5001)
     call_count = 0
 
@@ -28,6 +29,8 @@ async def test_send_text_retries_after_timeout_and_logs_ack() -> None:
 
     assert result is True
     assert call_count == 2
+    assert "accepted" in caplog.text
+    assert "DM ACK" not in caplog.text
 
 
 @pytest.mark.asyncio

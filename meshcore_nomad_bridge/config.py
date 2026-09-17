@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
+from string import Formatter
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class ConfigError(ValueError):
@@ -31,10 +34,16 @@ class Settings:
     nomad_session_map_path: str
 
     max_concurrent_requests: int
+    max_pending_requests: int
+    max_requests_per_sender: int
+    max_requests_global: int
+    rate_limit_window_seconds: float
+    allowed_sender_prefixes: tuple[str, ...]
     busy_wait_seconds: float
 
     max_reply_chunks: int
     max_chunk_bytes: int
+    reply_chunk_delay_seconds: float
     max_prompt_bytes: int
 
     radio_prompt_enabled: bool
@@ -45,44 +54,45 @@ class Settings:
     log_level: str
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         plugin_data_dir, config = _load_plugin_config()
 
         meshcore_host = _get_str("MESHCORE_HOST", "127.0.0.1", config)
-        meshcore_port = _get_int("MESHCORE_PORT", 5001, config)
+        meshcore_port = _get_int("MESHCORE_PORT", 5050, config)
 
         nomad_url = _get_required_str("NOMAD_URL", config)
         nomad_model = _get_required_str("NOMAD_MODEL", config)
         nomad_collection = _get_optional_str("NOMAD_COLLECTION", config)
         nomad_timeout_seconds = _get_float("NOMAD_TIMEOUT_SECONDS", 120.0, config)
-        one_shot = _get_bool("ONE_SHOT", True, config)
+        one_shot = _get_bool("ONE_SHOT", False, config)
         session_map_default = (
             str(plugin_data_dir / "nomad_sessions.json")
             if plugin_data_dir is not None
             else "./data/nomad_sessions.json"
         )
-        nomad_session_map_path = _get_str(
-            "NOMAD_SESSION_MAP_PATH", session_map_default, config
-        )
+        nomad_session_map_path = _get_str("NOMAD_SESSION_MAP_PATH", session_map_default, config)
 
-        max_concurrent_requests = _get_int("MAX_CONCURRENT_REQUESTS", 2, config)
+        max_concurrent_requests = _get_int("MAX_CONCURRENT_REQUESTS", 1, config)
+        max_pending_requests = _get_int(
+            "MAX_PENDING_REQUESTS", max(1, max_concurrent_requests), config
+        )
+        max_requests_per_sender = _get_int("MAX_REQUESTS_PER_SENDER", 2, config)
+        max_requests_global = _get_int(
+            "MAX_REQUESTS_GLOBAL", max(4, max_requests_per_sender), config
+        )
+        rate_limit_window_seconds = _get_float("RATE_LIMIT_WINDOW_SECONDS", 60.0, config)
+        allowed_sender_prefixes = _get_sender_prefixes("ALLOWED_SENDER_PREFIXES", config)
         busy_wait_seconds = _get_float("NOMAD_BUSY_WAIT_SECONDS", 5.0, config)
 
         max_reply_chunks = _get_int("MAX_REPLY_CHUNKS", 4, config)
-        max_chunk_bytes = _get_int("MAX_CHUNK_BYTES", 145, config)
+        max_chunk_bytes = _get_int("MAX_CHUNK_BYTES", 80, config)
+        reply_chunk_delay_seconds = _get_float("REPLY_CHUNK_DELAY_SECONDS", 2.0, config)
         max_prompt_bytes = _get_int("MAX_PROMPT_BYTES", 1000, config)
 
         radio_prompt_enabled = _get_bool("RADIO_PROMPT_ENABLED", True, config)
         radio_prompt_template = _get_str(
             "RADIO_PROMPT_TEMPLATE",
-            "You are answering a question received over a low-bandwidth MeshCore radio network.\\n"
-            "Give the most useful answer first.\\n"
-            "Be concise.\\n"
-            "Use plain text.\\n"
-            "Do not use Markdown tables.\\n"
-            "Avoid unnecessary introductions.\\n"
-            "Aim for fewer than 400 characters when practical.\\n\\n"
-            "User question:\\n{question}",
+            "You are a local AI assistant running through Project NOMAD, answering over MeshCore radio. Use relevant knowledge-base material supplied with the request. Only claim a specific guide, document, or file is available when that material confirms it.\nGive the direct answer first in one short paragraph, ideally under 250 characters.\nUse plain text only: no Markdown, bold, italics, headings, tables, or numbered lists.\nOmit introductions, repeated questions, and filler. For procedures, give only the essential steps in short sentences.\nPrefer common words and simple punctuation. Do not sacrifice accuracy or essential safety details to shorten the answer.\nDo not invent names, sources, URLs, or access instructions. If unsure, say so briefly or ask one short clarifying question.\n\nUser question:\n{question}",
             config,
         )
 
@@ -100,9 +110,15 @@ class Settings:
             one_shot=one_shot,
             nomad_session_map_path=nomad_session_map_path,
             max_concurrent_requests=max_concurrent_requests,
+            max_pending_requests=max_pending_requests,
+            max_requests_per_sender=max_requests_per_sender,
+            max_requests_global=max_requests_global,
+            rate_limit_window_seconds=rate_limit_window_seconds,
+            allowed_sender_prefixes=allowed_sender_prefixes,
             busy_wait_seconds=busy_wait_seconds,
             max_reply_chunks=max_reply_chunks,
             max_chunk_bytes=max_chunk_bytes,
+            reply_chunk_delay_seconds=reply_chunk_delay_seconds,
             max_prompt_bytes=max_prompt_bytes,
             radio_prompt_enabled=radio_prompt_enabled,
             radio_prompt_template=radio_prompt_template,
@@ -208,21 +224,82 @@ def _get_bool(name: str, default: bool, config: dict[str, Any]) -> bool:
     raise ConfigError(f"{name} must be a boolean")
 
 
+def _get_sender_prefixes(name: str, config: dict[str, Any]) -> tuple[str, ...]:
+    raw = _raw_value(name, config, [])
+    if isinstance(raw, str):
+        values = raw.split(",")
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        raise ConfigError(f"{name} must be a list or comma-separated string")
+
+    prefixes: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ConfigError(f"{name} entries must be strings")
+        prefix = value.strip().lower()
+        if not prefix:
+            continue
+        if len(prefix) != 12 or any(char not in "0123456789abcdef" for char in prefix):
+            raise ConfigError(f"{name} entries must be 12 hexadecimal characters")
+        prefixes.append(prefix)
+    return tuple(dict.fromkeys(prefixes))
+
+
 def _validate(settings: Settings) -> None:
     if not settings.meshcore_host:
         raise ConfigError("MESHCORE_HOST must not be empty")
     if not (1 <= settings.meshcore_port <= 65535):
         raise ConfigError("MESHCORE_PORT must be between 1 and 65535")
 
-    if not settings.nomad_url.startswith(("http://", "https://")):
-        raise ConfigError("NOMAD_URL must start with http:// or https://")
+    try:
+        parsed_url = urlsplit(settings.nomad_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+            raise ValueError
+        if any(ord(char) <= 32 or ord(char) == 127 for char in settings.nomad_url):
+            raise ValueError
+        port = parsed_url.port
+        if (
+            parsed_url.username
+            or parsed_url.password
+            or parsed_url.fragment
+            or parsed_url.query
+            or parsed_url.path not in {"", "/"}
+        ):
+            raise ValueError
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError
+    except ValueError as exc:
+        raise ConfigError(
+            "NOMAD_URL must be a valid HTTP(S) origin with a hostname or IP address"
+        ) from exc
     if not settings.nomad_session_map_path:
         raise ConfigError("NOMAD_SESSION_MAP_PATH must not be empty")
+
+    numeric_settings = {
+        "NOMAD_TIMEOUT_SECONDS": settings.nomad_timeout_seconds,
+        "RATE_LIMIT_WINDOW_SECONDS": settings.rate_limit_window_seconds,
+        "NOMAD_BUSY_WAIT_SECONDS": settings.busy_wait_seconds,
+        "REPLY_CHUNK_DELAY_SECONDS": settings.reply_chunk_delay_seconds,
+    }
+    for name, value in numeric_settings.items():
+        if not math.isfinite(value):
+            raise ConfigError(f"{name} must be finite")
 
     if settings.nomad_timeout_seconds <= 0:
         raise ConfigError("NOMAD_TIMEOUT_SECONDS must be > 0")
     if settings.max_concurrent_requests <= 0:
         raise ConfigError("MAX_CONCURRENT_REQUESTS must be > 0")
+    if settings.max_pending_requests < settings.max_concurrent_requests:
+        raise ConfigError("MAX_PENDING_REQUESTS must be >= MAX_CONCURRENT_REQUESTS")
+    if settings.max_requests_per_sender <= 0:
+        raise ConfigError("MAX_REQUESTS_PER_SENDER must be > 0")
+    if settings.max_requests_global <= 0:
+        raise ConfigError("MAX_REQUESTS_GLOBAL must be > 0")
+    if settings.max_requests_per_sender > settings.max_requests_global:
+        raise ConfigError("MAX_REQUESTS_PER_SENDER must be <= MAX_REQUESTS_GLOBAL")
+    if settings.rate_limit_window_seconds <= 0:
+        raise ConfigError("RATE_LIMIT_WINDOW_SECONDS must be > 0")
     if settings.busy_wait_seconds < 0:
         raise ConfigError("NOMAD_BUSY_WAIT_SECONDS must be >= 0")
 
@@ -230,11 +307,23 @@ def _validate(settings: Settings) -> None:
         raise ConfigError("MAX_REPLY_CHUNKS must be > 0")
     if settings.max_chunk_bytes < 40:
         raise ConfigError("MAX_CHUNK_BYTES must be >= 40")
+    if not 0 <= settings.reply_chunk_delay_seconds <= 60:
+        raise ConfigError("REPLY_CHUNK_DELAY_SECONDS must be between 0 and 60")
     if settings.max_prompt_bytes <= 0:
         raise ConfigError("MAX_PROMPT_BYTES must be > 0")
 
-    if "{question}" not in settings.radio_prompt_template:
-        raise ConfigError("RADIO_PROMPT_TEMPLATE must contain {question}")
+    try:
+        parsed_template = list(Formatter().parse(settings.radio_prompt_template))
+    except ValueError as exc:
+        raise ConfigError("RADIO_PROMPT_TEMPLATE must be a valid format string") from exc
+    fields = [field_name for _, field_name, _, _ in parsed_template if field_name is not None]
+    invalid_fields = [
+        field_name
+        for _, field_name, format_spec, conversion in parsed_template
+        if field_name is not None and (format_spec or conversion or field_name != "question")
+    ]
+    if "question" not in fields or invalid_fields:
+        raise ConfigError("RADIO_PROMPT_TEMPLATE must contain only the {question} field")
 
     if settings.duplicate_ttl_seconds < 60:
         raise ConfigError("DUPLICATE_TTL_SECONDS must be >= 60")

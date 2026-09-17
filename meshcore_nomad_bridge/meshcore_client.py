@@ -6,24 +6,35 @@ import asyncio
 import contextlib
 import logging
 import struct
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
 from openhop_core.companion.constants import (
     CMD_APP_START,
     CMD_DEVICE_QUERY,
+    CMD_GET_CONTACTS,
+    CMD_REMOVE_CONTACT,
+    CMD_SEND_SELF_ADVERT,
     CMD_SEND_TXT_MSG,
     CMD_SYNC_NEXT_MESSAGE,
+    CONTACT_NAME_SIZE,
     FRAME_INBOUND_PREFIX,
     FRAME_OUTBOUND_PREFIX,
+    MAX_PATH_SIZE,
+    OUT_PATH_UNKNOWN,
+    PUB_KEY_SIZE,
     PUSH_CODE_MSG_WAITING,
     RESP_CODE_CHANNEL_MSG_RECV,
     RESP_CODE_CHANNEL_MSG_RECV_V3,
+    RESP_CODE_CONTACT,
     RESP_CODE_CONTACT_MSG_RECV,
     RESP_CODE_CONTACT_MSG_RECV_V3,
+    RESP_CODE_CONTACTS_START,
     RESP_CODE_CURR_TIME,
+    RESP_CODE_END_OF_CONTACTS,
     RESP_CODE_ERR,
     RESP_CODE_NO_MORE_MESSAGES,
+    RESP_CODE_OK,
     RESP_CODE_SENT,
     TXT_TYPE_PLAIN,
 )
@@ -34,6 +45,8 @@ logger = logging.getLogger(__name__)
 _CMD_NAMES = {
     CMD_APP_START: "CMD_APP_START",
     CMD_DEVICE_QUERY: "CMD_DEVICE_QUERY",
+    CMD_GET_CONTACTS: "CMD_GET_CONTACTS",
+    CMD_REMOVE_CONTACT: "CMD_REMOVE_CONTACT",
     CMD_SEND_TXT_MSG: "CMD_SEND_TXT_MSG",
     CMD_SYNC_NEXT_MESSAGE: "CMD_SYNC_NEXT_MESSAGE",
 }
@@ -41,9 +54,12 @@ _CMD_NAMES = {
 _RESP_NAMES = {
     RESP_CODE_CHANNEL_MSG_RECV: "RESP_CODE_CHANNEL_MSG_RECV",
     RESP_CODE_CHANNEL_MSG_RECV_V3: "RESP_CODE_CHANNEL_MSG_RECV_V3",
+    RESP_CODE_CONTACT: "RESP_CODE_CONTACT",
     RESP_CODE_CONTACT_MSG_RECV: "RESP_CODE_CONTACT_MSG_RECV",
     RESP_CODE_CONTACT_MSG_RECV_V3: "RESP_CODE_CONTACT_MSG_RECV_V3",
+    RESP_CODE_CONTACTS_START: "RESP_CODE_CONTACTS_START",
     RESP_CODE_CURR_TIME: "RESP_CODE_CURR_TIME",
+    RESP_CODE_END_OF_CONTACTS: "RESP_CODE_END_OF_CONTACTS",
     RESP_CODE_ERR: "RESP_CODE_ERR",
     RESP_CODE_NO_MORE_MESSAGES: "RESP_CODE_NO_MORE_MESSAGES",
     RESP_CODE_SENT: "RESP_CODE_SENT",
@@ -125,7 +141,7 @@ class MeshCoreClient:
                 raise
             except Exception as exc:
                 self._connected.clear()
-                logger.warning("MeshCore connection lost: %s", exc)
+                logger.warning("MeshCore connection lost: %s", exc, exc_info=True)
 
             if stop_event.is_set() or self._stop_requested.is_set():
                 break
@@ -137,6 +153,212 @@ class MeshCoreClient:
                 await asyncio.wait_for(stop_event.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
+
+    @property
+    def connected(self) -> bool:
+        return self._connected.is_set()
+
+    async def send_advert(self, mode: str, *, may_send: Callable[[], bool] | None = None) -> str:
+        """One explicit advert on this connection. Never retry uncertain acceptance."""
+        if mode not in ("zero-hop", "flood"):
+            raise ValueError("mode must be zero-hop or flood")
+        if not self.connected:
+            return "disconnected"
+        try:
+            await asyncio.wait_for(self._command_lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            return "busy"
+        try:
+            if not self.connected:
+                return "disconnected"
+            try:
+
+                async def guarded_send():
+                    # Revalidate inside the scheduled coroutine, under the lock,
+                    # immediately before the socket write (no intervening await).
+                    if may_send is not None and not may_send():
+                        return None
+                    return await self._send_command_expect(
+                        bytes([CMD_SEND_SELF_ADVERT, int(mode == "flood")]),
+                        expected_codes={RESP_CODE_OK, RESP_CODE_ERR},
+                        command_label="send_advert",
+                    )
+
+                frame = await asyncio.wait_for(guarded_send(), timeout=10)
+                if frame is None:
+                    return "expired"
+                if frame[0] == RESP_CODE_OK:
+                    return "accepted"
+                if frame[0] == RESP_CODE_ERR:
+                    return "rejected"
+            except asyncio.CancelledError:
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                raise
+            except Exception:
+                logger.exception("Advert command failed; acceptance unknown")
+            # No transaction IDs: discard the uncertain connection so a late OK
+            # cannot acknowledge a subsequent action. The run loop reconnects.
+            self._connected.clear()
+            if self._writer is not None:
+                self._writer.close()
+            return "unknown"
+        finally:
+            self._command_lock.release()
+
+    async def companion_settings(self, patch: dict, *, may_send=None) -> dict:
+        """Read or explicitly apply preferences using this connection only."""
+        from .companion_settings import operate
+
+        return await operate(self, patch, may_send=may_send)
+
+    async def get_contacts(self, *, may_send: Callable[[], bool] | None = None) -> dict:
+        """Fetch the full contact list from the Companion.
+
+        Returns a dict with 'status', 'total', and 'contacts' (list of dicts).
+        Each contact dict has: public_key (hex), name, adv_type, flags,
+        out_path_len, last_advert, lastmod, gps_lat, gps_lon.
+        """
+        if not self.connected:
+            return {"status": "disconnected", "contacts": [], "total": 0}
+        try:
+            await asyncio.wait_for(self._command_lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            return {"status": "busy", "contacts": [], "total": 0}
+        try:
+            if not self.connected:
+                return {"status": "disconnected", "contacts": [], "total": 0}
+            try:
+                if may_send is not None and not may_send():
+                    return {"status": "expired", "contacts": [], "total": 0}
+
+                # CMD_GET_CONTACTS takes an optional 4-byte 'since' timestamp
+                frame = await asyncio.wait_for(
+                    self._send_command_expect(
+                        bytes([CMD_GET_CONTACTS]) + struct.pack("<I", 0),
+                        expected_codes={RESP_CODE_CONTACTS_START, RESP_CODE_ERR},
+                        command_label="get_contacts",
+                    ),
+                    timeout=15,
+                )
+                if frame[0] == RESP_CODE_ERR:
+                    return {"status": "error", "contacts": [], "total": 0}
+
+                total = struct.unpack("<I", frame[1:5])[0] if len(frame) >= 5 else 0
+                contacts = []
+                # Collect individual RESP_CODE_CONTACT frames until END_OF_CONTACTS
+                while True:
+                    resp = await asyncio.wait_for(
+                        self._next_command_response(), timeout=10
+                    )
+                    if resp[0] == RESP_CODE_END_OF_CONTACTS:
+                        break
+                    if resp[0] == RESP_CODE_CONTACT:
+                        parsed = self._parse_contact_frame(resp[1:])
+                        if parsed is not None:
+                            contacts.append(parsed)
+                    # Skip unexpected frames within the contact dump
+                return {"status": "ok", "contacts": contacts, "total": total}
+            except asyncio.CancelledError:
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                raise
+            except Exception:
+                logger.exception("get_contacts failed")
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                return {"status": "error", "contacts": [], "total": 0}
+        finally:
+            self._command_lock.release()
+
+    def _parse_contact_frame(self, data: bytes) -> dict | None:
+        """Parse a RESP_CODE_CONTACT body into a dict.
+
+        Layout: pubkey(32) + adv_type(1) + flags(1) + out_path_len(1)
+        + out_path(64) + name(32) + last_advert(4) + lat(4i) + lon(4i) + lastmod(4).
+        """
+        # Minimum: 32 + 3 + 64 + 32 = 131 bytes (without trailing timestamps)
+        if len(data) < 131:
+            return None
+        pubkey = data[:PUB_KEY_SIZE].hex()
+        adv_type = data[32]
+        flags = data[33]
+        opl = data[34]
+        out_path_len = -1 if opl == OUT_PATH_UNKNOWN else opl
+        # out_path occupies bytes 35..98 (64 bytes), name occupies 99..130 (32 bytes)
+        name_start = 35 + MAX_PATH_SIZE
+        name_end = name_start + CONTACT_NAME_SIZE
+        name = data[name_start:name_end].split(b"\x00")[0].decode("utf-8", errors="replace")
+        last_advert = 0
+        gps_lat = 0.0
+        gps_lon = 0.0
+        lastmod = 0
+        if len(data) >= name_end + 4:
+            last_advert = struct.unpack_from("<I", data, name_end)[0]
+        if len(data) >= name_end + 12:
+            gps_lat = struct.unpack_from("<i", data, name_end + 4)[0] / 1e6
+            gps_lon = struct.unpack_from("<i", data, name_end + 8)[0] / 1e6
+        if len(data) >= name_end + 16:
+            lastmod = struct.unpack_from("<I", data, name_end + 12)[0]
+        return {
+            "public_key": pubkey,
+            "name": name,
+            "adv_type": adv_type,
+            "flags": flags,
+            "out_path_len": out_path_len,
+            "last_advert": last_advert,
+            "lastmod": lastmod,
+            "gps_lat": gps_lat,
+            "gps_lon": gps_lon,
+        }
+
+    async def remove_contact(self, pubkey_hex: str, *, may_send: Callable[[], bool] | None = None) -> str:
+        """Remove a contact by public key hex. Returns status string."""
+        if not self.connected:
+            return "disconnected"
+        try:
+            pubkey = bytes.fromhex(pubkey_hex)
+        except ValueError:
+            return "invalid_key"
+        if len(pubkey) < PUB_KEY_SIZE:
+            return "invalid_key"
+        try:
+            await asyncio.wait_for(self._command_lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            return "busy"
+        try:
+            if not self.connected:
+                return "disconnected"
+            try:
+                if may_send is not None and not may_send():
+                    return "expired"
+                frame = await asyncio.wait_for(
+                    self._send_command_expect(
+                        bytes([CMD_REMOVE_CONTACT]) + pubkey[:PUB_KEY_SIZE],
+                        expected_codes={RESP_CODE_OK, RESP_CODE_ERR},
+                        command_label="remove_contact",
+                    ),
+                    timeout=10,
+                )
+                if frame[0] == RESP_CODE_OK:
+                    return "ok"
+                return "not_found"
+            except asyncio.CancelledError:
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                raise
+            except Exception:
+                logger.exception("remove_contact failed; outcome unknown")
+                self._connected.clear()
+                if self._writer is not None:
+                    self._writer.close()
+                return "unknown"
+        finally:
+            self._command_lock.release()
 
     async def send_text(self, recipient_prefix: bytes, text: str) -> bool:
         if len(recipient_prefix) < 6:
@@ -162,7 +384,7 @@ class MeshCoreClient:
                 code = frame[0]
                 if code == RESP_CODE_SENT:
                     logger.info(
-                        "DM ACK received for recipient=%s on attempt %s/%s",
+                        "Companion accepted DM for recipient=%s on attempt %s/%s (not RF delivery confirmation)",
                         recipient_prefix[:6].hex(),
                         attempt,
                         max_retries,
@@ -180,7 +402,7 @@ class MeshCoreClient:
             except asyncio.TimeoutError:
                 if attempt == max_retries:
                     logger.warning(
-                        "No DM ACK received for recipient=%s after %s attempts",
+                        "No send acceptance received for recipient=%s after %s attempts; outcome unknown",
                         recipient_prefix[:6].hex(),
                         max_retries,
                     )
@@ -188,7 +410,7 @@ class MeshCoreClient:
 
                 delay = 1.0 * (2 ** (attempt - 1))
                 logger.warning(
-                    "No DM ACK received for recipient=%s, retrying in %.1fs (%s/%s)",
+                    "No send acceptance received for recipient=%s, retrying in %.1fs (%s/%s)",
                     recipient_prefix[:6].hex(),
                     delay,
                     attempt,
