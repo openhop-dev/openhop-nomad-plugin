@@ -54,7 +54,7 @@ def test_tabs_and_companion_controls(tmp_path):
         page.wait_for_function(
             "document.querySelector('#global-status').textContent.includes('Ready')"
         )
-        assert page.get_by_role("tab").count() == 4
+        assert page.get_by_role("tab").count() == 5
         page.locator("#nomad_model").fill("unsaved-model")
         page.get_by_role("tab", name="Connectivity", exact=True).press("ArrowRight")
         assert (
@@ -62,7 +62,8 @@ def test_tabs_and_companion_controls(tmp_path):
             == "true"
         )
         page.locator("#one_shot").check()
-        page.get_by_role("tab", name="Behavior & access").press("End")
+        page.get_by_role("tab", name="Behavior & access").press("ArrowRight")
+        page.get_by_role("tab", name="Replies").press("ArrowRight")
         assert (
             page.get_by_role("tab", name="Companion device").get_attribute("aria-selected")
             == "true"
@@ -137,6 +138,8 @@ def test_tabs_and_companion_controls(tmp_path):
                     tab.click()
                     assert page.get_by_role("tabpanel").count() == 1
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                # Navigate back to companion tab for layout checks.
+                page.get_by_role("tab", name="Companion device", exact=True).click()
                 # Labels and controls share a consistent row, including the checkbox.
                 auto = page.locator("#companion-auto-add").bounding_box()
                 overwrite = page.locator("#panel-companion .check-card").bounding_box()
