@@ -259,6 +259,7 @@
     delete clean._runtime;
     delete clean.advert_request;
     delete clean.companion_request;
+    delete clean.contacts_request;
     return clean;
   }
 
@@ -508,5 +509,188 @@
     const panel = event.target.closest('[role="tabpanel"]');
     if (panel) selectTab($(panel.getAttribute("aria-labelledby")));
   }, true);
+
+  // ── Contacts address book ──
+  let contactsBusy = false;
+  let contactsFavorites = new Set();
+
+  const ADV_TYPES = { 0: "Chat", 1: "Repeater", 2: "Room", 6: "Sensor" };
+  function advTypeName(t) { return ADV_TYPES[t] || `Type ${t}`; }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "never";
+    const d = new Date(ts * 1000);
+    const now = Date.now();
+    const diff = now - d.getTime();
+    if (diff < 60000) return "just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function pathLabel(len) {
+    if (len < 0) return "unknown path";
+    if (len === 0) return "direct";
+    return `${len} hop${len > 1 ? "s" : ""}`;
+  }
+
+  async function contactsRuntime() {
+    const response = await apiFetch(`/api/plugins/runtime?id=${encodeURIComponent(PLUGIN_ID)}`);
+    if (!response.ok) throw new Error("Contacts unavailable: running plugin runtime API is required.");
+    const runtime = (await response.json()).runtime;
+    const state = runtime?.contacts;
+    if (!state || !state.connected || !Number.isFinite(state.updated_at) || typeof state.token !== "string" || !/^[a-f0-9]{64}$/.test(state.token) || Math.abs(Date.now() / 1000 - state.updated_at) > (state.result?.status === "pending" ? 20 : 5)) {
+      throw new Error("Contacts unavailable: plugin stopped, disconnected, or runtime stale.");
+    }
+    // Sync favorites from runtime
+    if (Array.isArray(state.favorites)) {
+      contactsFavorites = new Set(state.favorites);
+    }
+    return { ...state, otherPending: runtime.advert?.result?.status === "pending" || runtime.companion?.result?.status === "pending" };
+  }
+
+  async function refreshContactsButton() {
+    if (contactsBusy) return;
+    try {
+      const state = await contactsRuntime();
+      if (contactsBusy) return;
+      $("contacts-refresh").disabled = state.otherPending || state.result?.status === "pending";
+      if (!$("contacts-status").dataset.result) $("contacts-status").textContent = `Running Companion: ${state.endpoint}. Click Refresh to load contacts.`;
+    } catch (error) {
+      if (contactsBusy) return;
+      $("contacts-refresh").disabled = true;
+      if (!$("contacts-status").dataset.result) $("contacts-status").textContent = error.message;
+    }
+  }
+
+  function renderContacts(contacts, total) {
+    const list = $("contacts-list");
+    list.innerHTML = "";
+    if (!contacts || contacts.length === 0) {
+      list.innerHTML = '<div class="contacts-empty">No contacts found on this Companion.</div>';
+      $("contacts-count").textContent = "";
+      return;
+    }
+    // Sort: favorites first, then by name, then by last_advert descending
+    const sorted = [...contacts].sort((a, b) => {
+      const af = contactsFavorites.has(a.public_key) ? 0 : 1;
+      const bf = contactsFavorites.has(b.public_key) ? 0 : 1;
+      if (af !== bf) return af - bf;
+      if (a.name && !b.name) return -1;
+      if (!a.name && b.name) return 1;
+      if (a.name && b.name) { const c = a.name.localeCompare(b.name); if (c !== 0) return c; }
+      return (b.last_advert || 0) - (a.last_advert || 0);
+    });
+    for (const c of sorted) {
+      const isFav = contactsFavorites.has(c.public_key);
+      const row = document.createElement("div");
+      row.className = `contact-row${isFav ? " favorite" : ""}`;
+      const prefix = c.public_key.substring(0, 12);
+      row.innerHTML = `
+        <div class="contact-info">
+          <div class="contact-name">${c.name ? escapeHtml(c.name) : ""}</div>
+          <div class="contact-meta">
+            <span>${prefix}</span>
+            <span class="contact-type-badge">${advTypeName(c.adv_type)}</span>
+            <span>${pathLabel(c.out_path_len)}</span>
+            <span>last advert: ${formatTimestamp(c.last_advert)}</span>
+          </div>
+        </div>
+        <div class="contact-actions">
+          <button type="button" class="fav-btn${isFav ? " fav-active" : ""}" data-key="${c.public_key}" title="${isFav ? "Remove from favorites" : "Add to favorites"}">${isFav ? "★" : "☆"}</button>
+          <button type="button" class="remove-btn" data-key="${c.public_key}" title="Remove contact">Remove</button>
+        </div>`;
+      list.appendChild(row);
+    }
+    $("contacts-count").textContent = `${contacts.length} contact${contacts.length !== 1 ? "s" : ""} (${total} total capacity used)`;
+
+    // Bind buttons
+    list.querySelectorAll(".fav-btn").forEach(btn => btn.addEventListener("click", () => toggleFavorite(btn.dataset.key)));
+    list.querySelectorAll(".remove-btn").forEach(btn => btn.addEventListener("click", () => removeContact(btn.dataset.key)));
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  async function contactsAction(action, extra = {}) {
+    if (contactsBusy) return;
+    contactsBusy = true;
+    $("contacts-refresh").disabled = true;
+    $("contacts-status").dataset.result = "true";
+    $("contacts-status").textContent = action === "list" ? "Loading contacts…" : `${action} in progress…`;
+    try {
+      const config = await fetchConfig();
+      const state = await contactsRuntime();
+      if (state.otherPending || state.result?.status === "pending") throw new Error("Another action is pending; wait for its result.");
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      const response = await apiFetch(API, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: PLUGIN_ID, restart: false,
+          config: { ...stripRuntime(config), contacts_request: { id, action, token: state.token, ...extra } } })
+      });
+      if (!response.ok) throw new Error("Request not confirmed. Do not automatically retry.");
+
+      if (action === "favorite" || action === "unfavorite") {
+        // These are instant (no Companion command), just wait for the runtime to update
+        await new Promise(resolve => setTimeout(resolve, 800));
+        const updated = await contactsRuntime();
+        $("contacts-status").textContent = `${action === "favorite" ? "Added to" : "Removed from"} favorites.`;
+        // Re-render with updated favorites
+        if (updated.result?.action === "list" && Array.isArray(updated.result?.contacts)) {
+          renderContacts(updated.result.contacts, updated.result.total || 0);
+        }
+        return;
+      }
+
+      $("contacts-status").textContent = "Waiting for Companion response…";
+      const deadline = Date.now() + 25000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const current = await contactsRuntime();
+        const result = current.result;
+        if (result?.id !== id || result.status === "pending") continue;
+
+        if (action === "list") {
+          if (result.status === "ok" && Array.isArray(result.contacts)) {
+            renderContacts(result.contacts, result.total || 0);
+            $("contacts-status").textContent = `Contacts loaded from Companion: ${current.endpoint}.`;
+          } else {
+            $("contacts-status").textContent = `Failed to load contacts: ${result.status}.`;
+          }
+        } else if (action === "remove") {
+          if (result.status === "ok") {
+            $("contacts-status").textContent = "Contact removed. Click Refresh to update the list.";
+          } else {
+            $("contacts-status").textContent = `Remove failed: ${result.status}.`;
+          }
+        }
+        return;
+      }
+      throw new Error("Response unknown or request expired. Do not automatically retry.");
+    } catch (error) {
+      $("contacts-status").textContent = error.message;
+    } finally {
+      contactsBusy = false;
+      await refreshContactsButton();
+    }
+  }
+
+  async function toggleFavorite(pubkey) {
+    const isFav = contactsFavorites.has(pubkey);
+    await contactsAction(isFav ? "unfavorite" : "favorite", { public_key: pubkey });
+  }
+
+  async function removeContact(pubkey) {
+    if (!confirm("Remove this contact from the Companion? This cannot be undone.")) return;
+    await contactsAction("remove", { public_key: pubkey });
+  }
+
+  $("contacts-refresh").addEventListener("click", () => contactsAction("list"));
+  setInterval(refreshContactsButton, 3000);
+  refreshContactsButton();
+
   loadConfig(true);
 })();

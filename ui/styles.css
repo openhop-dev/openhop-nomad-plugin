@@ -160,3 +160,21 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 [hidden] { display: none !important; }
 button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 650px) { .topbar { flex-wrap: wrap; gap: 12px; } .brand { gap: 8px; } .brand h1 { font-size: 1.25rem; } }
+
+/* Contacts address book */
+.contacts-list { margin-top: 14px; }
+.contact-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--panel-strong); transition: border-color .15s; }
+.contact-row:hover { border-color: var(--line-strong); }
+.contact-row.favorite { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: var(--warn-soft); }
+.contact-info { flex: 1; min-width: 0; }
+.contact-name { font-weight: 700; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contact-name:empty::after { content: "(unnamed)"; color: var(--muted); font-weight: 500; font-style: italic; }
+.contact-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; color: var(--muted); font-size: .72rem; font-family: var(--mono); }
+.contact-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.contact-actions button { appearance: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); padding: 5px 8px; font-size: .72rem; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.contact-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.contact-actions button.fav-active { color: var(--warn); border-color: var(--warn); }
+.contact-actions button.remove-btn:hover { border-color: var(--bad); color: var(--bad); }
+.contact-type-badge { display: inline-block; padding: 2px 6px; border-radius: 6px; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; background: var(--accent-soft); color: var(--accent); }
+.contacts-empty { padding: 24px; text-align: center; color: var(--muted); font-size: .88rem; }
+@media (max-width: 650px) { .contact-row { flex-wrap: wrap; } .contact-actions { width: 100%; justify-content: flex-end; } }

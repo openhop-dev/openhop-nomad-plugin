@@ -61,6 +61,7 @@
           <button type="button" role="tab" id="tab-behavior" aria-controls="panel-behavior" aria-selected="false" tabindex="-1">Behavior &amp; access</button>
           <button type="button" role="tab" id="tab-replies" aria-controls="panel-replies" aria-selected="false" tabindex="-1">Replies</button>
           <button type="button" role="tab" id="tab-companion" aria-controls="panel-companion" aria-selected="false" tabindex="-1">Companion device</button>
+          <button type="button" role="tab" id="tab-contacts" aria-controls="panel-contacts" aria-selected="false" tabindex="-1">Contacts</button>
         </div>
 
         <section id="panel-connectivity" role="tabpanel" aria-labelledby="tab-connectivity" class="card settings-section">
@@ -152,6 +153,21 @@
           </div>
           <p id="companion-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
           <p class="muted">Apply reads current preferences, preserves unrelated values, then verifies by reading back. Multi-command changes are not atomic. If partial or unknown, read again before deciding what to change; no automatic retry or rollback.</p>
+        </section>
+        <section id="panel-contacts" role="tabpanel" aria-labelledby="tab-contacts" class="card settings-section" hidden>
+          <div class="settings-section-heading">
+            <div>
+              <h3>Address book</h3>
+              <p>View, manage, and favorite contacts on the connected Companion. Removing stale contacts frees slots for new ones.</p>
+            </div>
+            <span class="section-number">05</span>
+          </div>
+          <div class="settings-actions nested">
+            <button id="contacts-refresh" class="button ghost" type="button" disabled>Refresh contacts</button>
+          </div>
+          <p id="contacts-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
+          <div id="contacts-list" class="contacts-list"></div>
+          <p id="contacts-count" class="muted"></p>
         </section>
       </form>
     </main>

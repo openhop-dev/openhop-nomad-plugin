@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from .companion_control import CompanionControl
+from .contacts_control import ContactsControl
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class AdvertControl:
         self.endpoint = endpoint
         self.result = None
         self.companion = CompanionControl(data_dir, meshcore, endpoint)
+        self.contacts = ContactsControl(data_dir, meshcore, endpoint)
         self._rotate()
 
     def _rotate(self):
@@ -36,6 +38,7 @@ class AdvertControl:
     def _publish(self):
         snapshot = {
             "companion": self.companion.snapshot(),
+            "contacts": self.contacts.snapshot(),
             "advert": {
                 "token": self.token,
                 "updated_at": time.time(),
@@ -63,6 +66,7 @@ class AdvertControl:
 
     async def tick(self):
         await self.companion.tick(self._publish)
+        await self.contacts.tick(self._publish)
         if time.monotonic() >= self.deadline:
             self._rotate()
         request = self._request()
