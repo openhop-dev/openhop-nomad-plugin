@@ -269,7 +269,17 @@ async def _async_http_request(
                 for char in response.reason or ""
             ):
                 raise OSError("invalid_http_response")
-            if response.headers.get("Transfer-Encoding", "chunked").lower() != "chunked":
+            # Accept chunked, Content-Length, or Connection: close bodies.
+            te = response.headers.get("Transfer-Encoding", "").lower()
+            has_content_length = response.content_length is not None
+            has_conn_close = "close" in response.headers.get("Connection", "").lower()
+            if te == "chunked":
+                pass  # chunked body — read iteratively below
+            elif has_content_length:
+                pass  # fixed-length body — read iteratively below
+            elif has_conn_close:
+                pass  # body ends at connection close — read iteratively below
+            else:
                 raise OSError("invalid_http_response")
             # Check aggregate size too; parser limits bound each field/count.
             if sum(len(k) + len(v) + 4 for k, v in response.raw_headers) > MAX_HTTP_HEADER_BYTES:

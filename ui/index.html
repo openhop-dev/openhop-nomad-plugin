@@ -13,7 +13,7 @@
       <div class="brand">
         <img class="nomad-logo" src="assets/project_nomad_logo.webp" alt="Project N.O.M.A.D.">
         <div><div class="eyebrow">openHop plugin</div><h1>NOMAD Bridge</h1></div>
-          <span class="version">v0.1.3</span>
+          <span class="version">v1.0.0</span>
       </div>
       <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Loading</span>
     </header>
@@ -164,6 +164,21 @@
           </div>
           <div class="settings-actions nested">
             <button id="contacts-refresh" class="button ghost" type="button" disabled>Refresh contacts</button>
+          </div>
+          <div class="contacts-controls">
+            <input id="contacts-search" type="text" placeholder="Search by name or key…" aria-label="Search contacts">
+            <select id="contacts-filter" aria-label="Filter contacts">
+              <option value="all">All contacts</option>
+              <option value="favorites">Favorites only</option>
+            </select>
+            <select id="contacts-type-filter" aria-label="Filter by type">
+              <option value="all">All types</option>
+              <option value="0">Unknown</option>
+              <option value="1">Companion</option>
+              <option value="2">Repeater</option>
+              <option value="3">Room Server</option>
+              <option value="4">Sensor</option>
+            </select>
           </div>
           <p id="contacts-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
           <div id="contacts-list" class="contacts-list"></div>

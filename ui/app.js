@@ -513,9 +513,15 @@
   // ── Contacts address book ──
   let contactsBusy = false;
   let contactsFavorites = new Set();
+  let contactsRaw = [];
+  let contactsTotal = 0;
+  let contactsSearch = "";
+  let contactsFilter = "all";
+  let contactsTypeFilter = "all";
 
-  const ADV_TYPES = { 0: "Chat", 1: "Repeater", 2: "Room", 6: "Sensor" };
-  function advTypeName(t) { return ADV_TYPES[t] || `Type ${t}`; }
+  // openhop_core.companion.constants ADV_TYPE_* values (not advert payload flags).
+  const ADV_TYPES = { 0: "Unknown", 1: "Companion", 2: "Repeater", 3: "Room Server", 4: "Sensor" };
+  function advTypeName(t) { return ADV_TYPES[t] ?? `Type ${t}`; }
 
   function formatTimestamp(ts) {
     if (!ts) return "never";
@@ -528,10 +534,14 @@
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
-  function pathLabel(len) {
-    if (len < 0) return "unknown path";
-    if (len === 0) return "direct";
-    return `${len} hop${len > 1 ? "s" : ""}`;
+  function pathLabel(encoded) {
+    if (encoded < 0 || encoded === 255) return "unknown path";
+    // Bits 6–7 encode hash width; bits 0–5 encode hop count.
+    const hops = encoded & 0x3f;
+    const width = (encoded >> 6) + 1;
+    if (width > 3 || hops * width > 64) return "invalid path";
+    if (hops === 0) return "direct";
+    return `${hops} hop${hops > 1 ? "s" : ""}`;
   }
 
   async function contactsRuntime() {
@@ -563,16 +573,58 @@
     }
   }
 
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function applyFilters(contacts) {
+    let filtered = [...contacts];
+
+    // Search by name or public key prefix
+    if (contactsSearch) {
+      const q = contactsSearch.toLowerCase();
+      filtered = filtered.filter(c =>
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        c.public_key.toLowerCase().includes(q)
+      );
+    }
+
+    // Favorites filter
+    if (contactsFilter === "favorites") {
+      filtered = filtered.filter(c => contactsFavorites.has(c.public_key));
+    }
+
+    // Type filter
+    if (contactsTypeFilter !== "all") {
+      const t = Number(contactsTypeFilter);
+      filtered = filtered.filter(c => c.adv_type === t);
+    }
+
+    return filtered;
+  }
+
   function renderContacts(contacts, total) {
+    contactsRaw = contacts || [];
+    contactsTotal = total || 0;
+
+    const filtered = applyFilters(contactsRaw);
     const list = $("contacts-list");
     list.innerHTML = "";
-    if (!contacts || contacts.length === 0) {
-      list.innerHTML = '<div class="contacts-empty">No contacts found on this Companion.</div>';
+
+    if (filtered.length === 0) {
+      if (contactsRaw.length === 0) {
+        list.innerHTML = '<div class="contacts-empty">No contacts found on this Companion.</div>';
+      } else {
+        list.innerHTML = '<div class="contacts-empty">No contacts match your current filters.</div>';
+      }
       $("contacts-count").textContent = "";
       return;
     }
+
     // Sort: favorites first, then by name, then by last_advert descending
-    const sorted = [...contacts].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
       const af = contactsFavorites.has(a.public_key) ? 0 : 1;
       const bf = contactsFavorites.has(b.public_key) ? 0 : 1;
       if (af !== bf) return af - bf;
@@ -581,6 +633,7 @@
       if (a.name && b.name) { const c = a.name.localeCompare(b.name); if (c !== 0) return c; }
       return (b.last_advert || 0) - (a.last_advert || 0);
     });
+
     for (const c of sorted) {
       const isFav = contactsFavorites.has(c.public_key);
       const row = document.createElement("div");
@@ -602,17 +655,15 @@
         </div>`;
       list.appendChild(row);
     }
-    $("contacts-count").textContent = `${contacts.length} contact${contacts.length !== 1 ? "s" : ""} (${total} total capacity used)`;
+
+    const showCount = filtered.length;
+    const totalCount = contactsTotal;
+    const filterNote = contactsSearch || contactsFilter !== "all" || contactsTypeFilter !== "all" ? ` (showing ${showCount} of ${totalCount})` : "";
+    $("contacts-count").textContent = `${showCount} contact${showCount !== 1 ? "s" : ""}${filterNote} (${totalCount} total capacity used)`;
 
     // Bind buttons
     list.querySelectorAll(".fav-btn").forEach(btn => btn.addEventListener("click", () => toggleFavorite(btn.dataset.key)));
     list.querySelectorAll(".remove-btn").forEach(btn => btn.addEventListener("click", () => removeContact(btn.dataset.key)));
-  }
-
-  function escapeHtml(s) {
-    const d = document.createElement("div");
-    d.textContent = s;
-    return d.innerHTML;
   }
 
   async function contactsAction(action, extra = {}) {
@@ -634,14 +685,34 @@
       if (!response.ok) throw new Error("Request not confirmed. Do not automatically retry.");
 
       if (action === "favorite" || action === "unfavorite") {
-        // These are instant (no Companion command), just wait for the runtime to update
-        await new Promise(resolve => setTimeout(resolve, 800));
-        const updated = await contactsRuntime();
-        $("contacts-status").textContent = `${action === "favorite" ? "Added to" : "Removed from"} favorites.`;
-        // Re-render with updated favorites
-        if (updated.result?.action === "list" && Array.isArray(updated.result?.contacts)) {
-          renderContacts(updated.result.contacts, updated.result.total || 0);
+        // These are instant (no Companion command) — poll until runtime reflects the change
+        const isFav = action === "favorite";
+        const pubkey = extra.public_key;
+        let synced = false;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          try {
+            const state = await contactsRuntime();
+            if (state.result?.id !== id || state.result.status !== "ok") {
+              if (state.result?.id === id && state.result.status !== "pending") {
+                throw new Error(`Favorite change failed: ${state.result.status}.`);
+              }
+              continue;
+            }
+            if (!Array.isArray(state.favorites)) continue;
+            if (state.favorites.includes(pubkey) === isFav) {
+              synced = true;
+              break;
+            }
+          } catch (error) {
+            if (error.message.startsWith("Favorite change failed:")) throw error;
+            // Runtime temporarily unavailable; keep polling.
+          }
         }
+        if (!synced) throw new Error("Favorite change not confirmed. Refresh contacts before retrying.");
+        $("contacts-status").textContent = isFav ? "Added to favorites." : "Removed from favorites.";
+        // Re-render with existing contacts and updated favorites — no network call needed
+        renderContacts(contactsRaw, contactsTotal);
         return;
       }
 
@@ -662,7 +733,12 @@
           }
         } else if (action === "remove") {
           if (result.status === "ok") {
-            $("contacts-status").textContent = "Contact removed. Click Refresh to update the list.";
+            $("contacts-status").textContent = "Contact removed. Refreshing list…";
+            await refreshContactsList();
+            if (result.favorite_cleanup === "error") {
+              $("contacts-status").textContent =
+                "Contact removed, but favorites could not be saved. Check storage before retrying.";
+            }
           } else {
             $("contacts-status").textContent = `Remove failed: ${result.status}.`;
           }
@@ -678,6 +754,39 @@
     }
   }
 
+  async function refreshContactsList() {
+    // Re-fetch contacts and re-render with current filters
+    try {
+      const config = await fetchConfig();
+      const state = await contactsRuntime();
+      if (state.result?.contacts && Array.isArray(state.result.contacts)) {
+        renderContacts(state.result.contacts, state.result.total || 0);
+      } else {
+        // Need to fetch fresh data
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+        const response = await apiFetch(API, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: PLUGIN_ID, restart: false,
+            config: { ...stripRuntime(config), contacts_request: { id, action: "list", token: state.token } } })
+        });
+        if (!response.ok) return;
+        // Wait for the result to appear in runtime
+        const deadline = Date.now() + 25000;
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 600));
+          const current = await contactsRuntime();
+          if (current.result?.id === id && current.result.status === "ok" && Array.isArray(current.result.contacts)) {
+            renderContacts(current.result.contacts, current.result.total || 0);
+            $("contacts-status").textContent = `Contacts refreshed from Companion: ${current.endpoint}.`;
+            return;
+          }
+        }
+      }
+    } catch (_) {
+      // Silently fail — refreshContactsButton will show the error
+    }
+  }
+
   async function toggleFavorite(pubkey) {
     const isFav = contactsFavorites.has(pubkey);
     await contactsAction(isFav ? "unfavorite" : "favorite", { public_key: pubkey });
@@ -687,6 +796,24 @@
     if (!confirm("Remove this contact from the Companion? This cannot be undone.")) return;
     await contactsAction("remove", { public_key: pubkey });
   }
+
+  // Search input — live filter, persists across refreshes
+  $("contacts-search").addEventListener("input", (e) => {
+    contactsSearch = e.target.value.trim();
+    renderContacts(contactsRaw, contactsTotal);
+  });
+
+  // Favorites filter — persists across refreshes
+  $("contacts-filter").addEventListener("change", (e) => {
+    contactsFilter = e.target.value;
+    renderContacts(contactsRaw, contactsTotal);
+  });
+
+  // Type filter — persists across refreshes
+  $("contacts-type-filter").addEventListener("change", (e) => {
+    contactsTypeFilter = e.target.value;
+    renderContacts(contactsRaw, contactsTotal);
+  });
 
   $("contacts-refresh").addEventListener("click", () => contactsAction("list"));
   setInterval(refreshContactsButton, 3000);

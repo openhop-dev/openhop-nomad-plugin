@@ -234,7 +234,7 @@ Important environment overrides include:
 
 ## Manual Companion adverts
 
-The plugin version is `0.1.3`. Replacing an existing installation of the same
+The plugin version is `1.0.0`. Replacing an existing installation of the same
 version requires an explicit reinstall; pip may otherwise keep the installed
 package. Restart the plugin after an authorized installation: the version label
 alone does not prove that the running process or UI assets were replaced.
@@ -264,10 +264,13 @@ A lost/replaced request expires; it is not retried. A missing acknowledgement me
 unknown acceptance, not proof that nothing was transmitted. No RF test or deployment
 is implied by building this wheel.
 
-## Upgrading from v0.1.2
+## Upgrading from v0.1.2 or v0.1.3 test builds
 
-Install with dependencies (including the new `aiohttp` and `aiodns` requirements). Python
-3.10 and newer remain supported. The `openhop-core==1.1.1` pin is unchanged.
+Install with dependencies (including `aiohttp` and `aiodns`). Python 3.10 and
+newer remain supported. The `openhop-core==1.1.1` pin is unchanged. This release
+promotes the tested 0.1.3 development line to 1.0.0; it does not migrate or
+replace a saved configuration. Restart the plugin after installing the new wheel
+and check the installed package version and running process, not just the UI label.
 Before restarting, set `allowed_sender_prefixes` to the permitted 12-hex-character sender
 prefixes and choose stateless (`one_shot: true`) or bounded RAM memory (`false`). An empty
 allowlist permits everyone who can DM this Companion and logs a startup warning;
@@ -291,7 +294,7 @@ network described above.
   "schema": 1,
   "id": "openhop.nomad",
   "name": "NOMAD Bridge",
-  "version": "0.1.3",
+  "version": "1.0.0",
   "runtime": {
     "type": "python",
     "entrypoint": "meshcore-nomad-bridge"
@@ -324,9 +327,9 @@ meshcore-nomad-bridge
 ## Companion device controls and settings tabs
 
 The configuration UI groups settings into Connectivity, Behavior & access,
-Replies, and Companion device tabs. Switching tabs preserves unsaved edits.
-Use Tab to reach the tab list, Left/Right to switch, and Home/End for the first
-or last tab; the tab buttons wrap on narrow screens.
+Replies, Companion device, and Contacts tabs. Switching tabs preserves unsaved
+edits. Use Tab to reach the tab list, Left/Right to switch, and Home/End for the
+first or last tab; the tab buttons wrap on narrow screens.
 
 In **Companion device**, first select **Read from Companion**, then choose
 **Auto Add All or None**, **Overwrite Oldest**, and **Path hash bytes 1, 2, or 3**.
@@ -352,6 +355,27 @@ Manager settings writes replace whole documents without compare-and-swap;
 avoid concurrent editors, saves, or device actions. Runtime polling does not
 replace unsaved form values. Hardware/RF behavior requires separate validation.
 
+## Contacts and dashboard access
+
+The **Contacts** tab reads the running Companion's address book on demand. It
+supports name/key search, type and favorites filters, persistent favorites,
+and contact removal (with confirmation). Removing a contact changes the
+Companion's address book; it is not merely hiding a row in the UI. Contact types
+use Companion (1), Repeater (2), Room Server (3), and Sensor (4), with Unknown
+(0) for unclassified entries. Displayed hop counts decode the path-length
+byte's hash-width bits; `0xff` means the route is unknown.
+
+The browser reads Repeater's `pymc_jwt_token` from same-origin localStorage and
+sends it as a bearer token to the existing `/api/plugins/settings` and
+`/api/plugins/runtime` routes. Repeater validates these requests server-side;
+without a valid login, saved settings and contact actions return 401. The plugin
+HTML, JavaScript, and CSS are still publicly readable at `/plugins/openhop.nomad/`;
+do not put credentials in static assets or mistake a client-side disabled button
+for authorization. Each contact action uses the plugin's running Companion
+connection and a process-scoped, expiring one-use request; a write with unknown
+outcome must not be retried automatically. Full-document settings writes have no
+compare-and-swap, so avoid simultaneous editors.
+
 ## Testing
 
 ```bash
@@ -376,7 +400,7 @@ python -m build --wheel
 The wheel is written to `dist/`, for example:
 
 ```text
-dist/openhop_nomad_plugin-0.1.3-py3-none-any.whl
+dist/openhop_nomad_plugin-1.0.0-py3-none-any.whl
 ```
 
 If you want both wheel and source distribution, run:

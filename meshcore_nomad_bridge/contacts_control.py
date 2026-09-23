@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -45,13 +47,15 @@ class ContactsControl:
         except (OSError, ValueError):
             logger.debug("No existing favorites file or invalid format")
 
-    def _save_favorites(self):
+    def _save_favorites(self, favorites: set[str]):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.data_dir / ".nomad-favorites.tmp"
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(sorted(self._favorites), f)
-        import os
-        os.replace(tmp, self.data_dir / _FAVORITES_FILE)
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(sorted(favorites), f)
+            os.replace(tmp, self.data_dir / _FAVORITES_FILE)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def snapshot(self):
         return {
@@ -92,26 +96,30 @@ class ContactsControl:
         self._rotate()  # consume before any await
         action = request["action"]
         req_id = request["id"]
+        key = request.get("public_key")
 
-        if action == "favorite":
-            key = request.get("public_key", "")
-            if isinstance(key, str) and len(key) >= 12:
-                self._favorites.add(key)
-                self._save_favorites()
-                self.result = {"id": req_id, "status": "ok", "action": "favorite"}
-            else:
-                self.result = {"id": req_id, "status": "error", "action": "favorite"}
-            publish()
-            return
+        if action in ("favorite", "unfavorite", "remove"):
+            if not isinstance(key, str) or re.fullmatch(r"[0-9a-fA-F]{64}", key) is None:
+                self.result = {"id": req_id, "status": "invalid_key", "action": action}
+                publish()
+                return
+            key = key.lower()
 
-        if action == "unfavorite":
-            key = request.get("public_key", "")
-            if isinstance(key, str):
-                self._favorites.discard(key)
-                self._save_favorites()
-                self.result = {"id": req_id, "status": "ok", "action": "unfavorite"}
+        if action in ("favorite", "unfavorite"):
+            assert isinstance(key, str)  # validated above
+            updated = set(self._favorites)
+            if action == "favorite":
+                updated.add(key)
             else:
-                self.result = {"id": req_id, "status": "error", "action": "unfavorite"}
+                updated.discard(key)
+            try:
+                self._save_favorites(updated)
+            except OSError:
+                logger.exception("Could not persist contact favorites")
+                self.result = {"id": req_id, "status": "error", "action": action}
+            else:
+                self._favorites = updated
+                self.result = {"id": req_id, "status": "ok", "action": action}
             publish()
             return
 
@@ -131,19 +139,21 @@ class ContactsControl:
                     "contacts": data.get("contacts", []),
                 }
             elif action == "remove":
-                pubkey = request.get("public_key", "")
-                if not isinstance(pubkey, str) or len(pubkey) < 64:
-                    self.result = {"id": req_id, "status": "invalid_key", "action": "remove"}
-                else:
-                    status = await self.meshcore.remove_contact(
-                        pubkey,
-                        may_send=lambda: time.monotonic() < deadline and self._request() == request,
-                    )
-                    self.result = {"id": req_id, "status": status, "action": "remove"}
-                    # Also remove from favorites if it was there
-                    if status == "ok":
-                        self._favorites.discard(pubkey)
-                        self._save_favorites()
+                assert isinstance(key, str)  # validated before dispatch
+                status = await self.meshcore.remove_contact(
+                    key,
+                    may_send=lambda: time.monotonic() < deadline and self._request() == request,
+                )
+                self.result = {"id": req_id, "status": status, "action": "remove"}
+                if status == "ok" and key in self._favorites:
+                    updated = self._favorites - {key}
+                    try:
+                        self._save_favorites(updated)
+                    except OSError:
+                        logger.exception("Contact removed but favorite cleanup could not be saved")
+                        self.result["favorite_cleanup"] = "error"
+                    else:
+                        self._favorites = updated
         except asyncio.CancelledError:
             self.result = {"id": req_id, "status": "unknown", "action": action}
             publish()

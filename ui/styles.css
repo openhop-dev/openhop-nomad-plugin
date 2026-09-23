@@ -163,6 +163,13 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
 /* Contacts address book */
 .contacts-list { margin-top: 14px; }
+.contacts-controls { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.contacts-controls input,
+.contacts-controls select { padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--text); font-size: .82rem; }
+.contacts-controls input { flex: 1 1 200px; min-width: 0; }
+.contacts-controls select { flex: 0 1 140px; min-width: 0; }
+.contacts-controls input:focus,
+.contacts-controls select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 .contact-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--panel-strong); transition: border-color .15s; }
 .contact-row:hover { border-color: var(--line-strong); }
 .contact-row.favorite { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: var(--warn-soft); }

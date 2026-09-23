@@ -27,6 +27,7 @@ class FakeMeshcore:
             return "disconnected"
         if may_send and not may_send():
             return "expired"
+        self.last_removed_key = pubkey_hex
         return self._remove_result
 
 
@@ -67,6 +68,74 @@ async def test_remove_contact(tmp_path):
     await ctrl.tick(lambda: None)
     assert ctrl.result["status"] == "ok"
     assert ctrl.result["action"] == "remove"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_key", ["aa" * 32 + "ff", "zz" * 32, "aa" * 31, 123])
+async def test_invalid_contact_key_never_reaches_radio_or_favorites(tmp_path, bad_key):
+    meshcore = FakeMeshcore()
+    ctrl = ContactsControl(tmp_path, meshcore, "127.0.0.1:5050")
+    for action in ("remove", "favorite", "unfavorite"):
+        _write_config(tmp_path, {"id": action, "action": action, "token": ctrl.token,
+                                 "public_key": bad_key})
+        await ctrl.tick(lambda: None)
+        assert ctrl.result is not None
+        assert ctrl.result["status"] == "invalid_key"
+        assert not hasattr(meshcore, "last_removed_key")
+        assert not ctrl._favorites
+
+
+@pytest.mark.asyncio
+async def test_failed_favorite_save_does_not_change_memory_or_report_success(tmp_path, monkeypatch):
+    meshcore = FakeMeshcore()
+    ctrl = ContactsControl(tmp_path, meshcore, "127.0.0.1:5050")
+    key = "ee" * 32
+    _write_config(tmp_path, {"id": "fav", "action": "favorite", "token": ctrl.token,
+                             "public_key": key})
+    monkeypatch.setattr(ctrl, "_save_favorites", lambda _: (_ for _ in ()).throw(OSError("disk full")))
+    published = []
+    await ctrl.tick(lambda: published.append(ctrl.result))
+    assert ctrl.result is not None
+    assert ctrl.result["status"] == "error"
+    assert key not in ctrl._favorites
+    assert ctrl.result in published
+    assert not (tmp_path / "nomad_favorites.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_unfavorite_save_keeps_prior_favorite(tmp_path, monkeypatch):
+    meshcore = FakeMeshcore()
+    ctrl = ContactsControl(tmp_path, meshcore, "127.0.0.1:5050")
+    key = "ee" * 32
+    _write_config(tmp_path, {"id": "fav", "action": "favorite", "token": ctrl.token,
+                             "public_key": key})
+    await ctrl.tick(lambda: None)
+    monkeypatch.setattr(ctrl, "_save_favorites", lambda _: (_ for _ in ()).throw(OSError("disk full")))
+    _write_config(tmp_path, {"id": "unfav", "action": "unfavorite", "token": ctrl.token,
+                             "public_key": key})
+    await ctrl.tick(lambda: None)
+    assert ctrl.result is not None
+    assert ctrl.result["status"] == "error"
+    assert key in ctrl._favorites
+    assert key in json.loads((tmp_path / "nomad_favorites.json").read_text())
+
+
+@pytest.mark.asyncio
+async def test_remove_success_with_failed_favorite_cleanup_reports_partial_result(tmp_path, monkeypatch):
+    meshcore = FakeMeshcore()
+    ctrl = ContactsControl(tmp_path, meshcore, "127.0.0.1:5050")
+    key = "ee" * 32
+    _write_config(tmp_path, {"id": "fav", "action": "favorite", "token": ctrl.token,
+                             "public_key": key})
+    await ctrl.tick(lambda: None)
+    monkeypatch.setattr(ctrl, "_save_favorites", lambda _: (_ for _ in ()).throw(OSError("disk full")))
+    _write_config(tmp_path, {"id": "remove", "action": "remove", "token": ctrl.token,
+                             "public_key": key})
+    await ctrl.tick(lambda: None)
+    assert meshcore.last_removed_key == key
+    assert ctrl.result == {"id": "remove", "action": "remove", "status": "ok",
+                           "favorite_cleanup": "error"}
+    assert key in ctrl._favorites
 
 
 @pytest.mark.asyncio
