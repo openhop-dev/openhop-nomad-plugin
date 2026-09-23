@@ -108,7 +108,7 @@ def valid_origin(run, tag, sha):
                 and run.get("event") in {"push", "release", "workflow_dispatch"}
                 and run.get("status") == "completed" and run.get("conclusion") == "success"
                 and run.get("path") == ".github/workflows/build-wheel.yml"
-                and run.get("name") == "Build Wheel"
+                and run.get("name") in {"Build Wheel", f"Build Wheel {tag}"}
                 and run.get("repository", {}).get("full_name") == REPOSITORY
                 and run.get("head_repository", {}).get("full_name") == REPOSITORY)
 

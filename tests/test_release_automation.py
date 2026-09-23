@@ -92,8 +92,12 @@ def test_wrong_origin_rejected(key, value):
 
 def test_main_dispatch_origin_requires_title_binding():
     r = run()
-    r.update(event="workflow_dispatch", head_branch="main", display_title="Build Wheel v0.1.2")
+    r.update(event="workflow_dispatch", head_branch="main", name="Build Wheel v0.1.2",
+             display_title="Build Wheel v0.1.2")
     assert module().valid_origin(r, "v0.1.2", "c" * 40)
+    r["name"] = "Build Wheel v0.1.3"
+    assert not module().valid_origin(r, "v0.1.2", "c" * 40)
+    r["name"] = "Build Wheel v0.1.2"
     r["display_title"] = "Build Wheel v0.1.3"
     assert not module().valid_origin(r, "v0.1.2", "c" * 40)
 
@@ -119,6 +123,18 @@ def test_manual_origin_uses_actual_main_run_with_older_tag_source(trusted_ancest
     else:
         with pytest.raises(ValueError, match="no successful Build Wheel origin"):
             m.origin(API(), "v0.1.2", "c" * 40)
+
+
+def test_workflow_run_event_accepts_tag_bound_manual_name():
+    m = module()
+    live = run()
+    live.update(name="Build Wheel v0.1.2", display_title="Build Wheel v0.1.2",
+                head_branch="main", event="workflow_dispatch")
+    class API:
+        def call(self, path):
+            assert path == "/repos/openhop-dev/openhop-nomad-plugin/actions/runs/10"
+            return live
+    assert m.event_tag(API(), {"workflow_run": live}, "workflow_run", "refs/heads/main", "") == "v0.1.2"
 
 
 def test_only_confirmed_404_is_absence():
