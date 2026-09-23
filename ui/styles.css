@@ -1,14 +1,16 @@
 :root {
   color-scheme: light dark;
-  --bg: #f3f5f8;
+  --bg: #f6f8ff;
   --panel: rgba(255,255,255,.94);
   --panel-strong: #fff;
-  --text: #17202a;
-  --muted: #687384;
-  --line: #dfe4ea;
-  --line-strong: #cbd3dc;
-  --accent: #e6522c;
-  --accent-soft: #fff0eb;
+  --text: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --accent: #3b82f6;
+  --secondary: #8b5cf6;
+  --brand-gradient: linear-gradient(135deg, var(--accent), var(--secondary));
+  --accent-soft: #dbeafe;
   --good: #178b55;
   --good-soft: #e9f8f0;
   --warn: #b16b00;
@@ -24,14 +26,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1319;
-    --panel: rgba(24,30,39,.96);
-    --panel-strong: #181e27;
-    --text: #f3f5f7;
-    --muted: #9aa5b4;
-    --line: #2b3441;
-    --line-strong: #3a4554;
-    --accent-soft: #3a211b;
+    --accent: #60a5fa;
+    --secondary: #a855f7;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --bg: #05070d;
+    --panel: #0d121f;
+    --panel-strong: #0d121f;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --line: #1f2937;
+    --line-strong: #374151;
+    --accent-soft: #1e3a8a;
     --good-soft: #123026;
     --warn-soft: #352c15;
     --bad-soft: #391e22;
@@ -40,6 +47,12 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.settings-tabs [role="tab"] { flex: 1 1 140px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: pointer; }
+.settings-tabs [aria-selected="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.settings-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#panel-companion .settings-actions { flex-wrap: wrap; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
 body { padding: 0 0 48px; }
 button, input, select, textarea { font: inherit; }
@@ -50,12 +63,7 @@ code, pre { font-family: var(--mono); }
 .topbar { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; align-items: center; gap: 13px; }
 .brand h1 { margin: 0; font-size: 1.5rem; letter-spacing: -.03em; }
-.brand-mark { width: 38px; height: 38px; border-radius: 12px; background: var(--accent); display: flex; align-items: end; justify-content: center; gap: 3px; padding: 9px; box-shadow: 0 7px 18px rgba(230,82,44,.24); }
-.brand-mark span { display: block; width: 4px; border-radius: 2px 2px 0 0; background: white; }
-.brand-mark span:nth-child(1) { height: 8px; }
-.brand-mark span:nth-child(2) { height: 16px; }
-.brand-mark span:nth-child(3) { height: 12px; }
-.brand-mark span:nth-child(4) { height: 20px; }
+.nomad-logo { width: 52px; height: 52px; object-fit: contain; flex-shrink: 0; display: block; }
 .version { padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .72rem; }
 .eyebrow { text-transform: uppercase; letter-spacing: .105em; font-size: .68rem; color: var(--muted); font-weight: 750; }
 
@@ -110,7 +118,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 
 .button { appearance: none; cursor: pointer; border: 1px solid var(--line-strong); background: var(--panel-strong); border-radius: 10px; font-weight: 700; padding: 10px 14px; }
 .button:hover { border-color: var(--accent); }
-.button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.button.primary { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 .button.ghost { background: transparent; border-color: var(--line); color: var(--muted); }
 .button:disabled { cursor: wait; opacity: .55; }
 
@@ -118,6 +126,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   .hero { grid-template-columns: 1fr; }
   .quick-facts { min-width: 0; }
   .form-grid.three { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .span-three { grid-column: 1 / -1; }
 }
 
 @media (max-width: 650px) {
@@ -132,3 +141,47 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   .settings-actions { width: 100%; }
   .settings-actions .button { flex: 1; }
 }
+
+/* Palette and config-card treatment follow openHop RepeaterUI base.css. */
+.hero { border-top: 3px solid var(--accent); }
+.field { min-width: 0; }
+.field > input, .field > select, .field > textarea { display: block; margin-top: 6px; }
+.field > small { display: block; margin-top: 6px; color: var(--muted); font-size: .78rem; }
+.field .check-card { min-height: 48px; cursor: default; }
+.field .check-card input { flex-shrink: 0; cursor: pointer; }
+#panel-companion .field > select,
+#panel-companion .field > .check-card { height: 48px; margin-top: 6px; }
+#panel-companion .field > .check-card { cursor: pointer; background: var(--panel-strong); border-color: var(--line-strong); }
+#panel-companion .settings-actions { flex-wrap: wrap; }
+.help-button { appearance: none; display: inline-block; max-width: 100%; min-height: 28px; padding: 3px 0; border: 0; background: transparent; color: var(--text); text-align: left; font-size: .78rem; font-weight: 650; cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 4px; }
+.help-indicator { display: inline-block; margin-left: .25em; color: var(--muted); font-size: .9em; font-weight: 500; text-decoration: none; white-space: nowrap; }
+.help-button:hover, .help-button[aria-expanded="true"] { color: var(--accent); text-decoration-style: solid; }
+.field-help { margin: 10px 0 0; padding: 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 6px; color: var(--text); font-size: .82rem; line-height: 1.55; }
+[hidden] { display: none !important; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 650px) { .topbar { flex-wrap: wrap; gap: 12px; } .brand { gap: 8px; } .brand h1 { font-size: 1.25rem; } }
+
+/* Contacts address book */
+.contacts-list { margin-top: 14px; }
+.contacts-controls { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.contacts-controls input,
+.contacts-controls select { padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--text); font-size: .82rem; }
+.contacts-controls input { flex: 1 1 200px; min-width: 0; }
+.contacts-controls select { flex: 0 1 140px; min-width: 0; }
+.contacts-controls input:focus,
+.contacts-controls select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.contact-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--panel-strong); transition: border-color .15s; }
+.contact-row:hover { border-color: var(--line-strong); }
+.contact-row.favorite { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: var(--warn-soft); }
+.contact-info { flex: 1; min-width: 0; }
+.contact-name { font-weight: 700; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contact-name:empty::after { content: "(unnamed)"; color: var(--muted); font-weight: 500; font-style: italic; }
+.contact-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; color: var(--muted); font-size: .72rem; font-family: var(--mono); }
+.contact-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.contact-actions button { appearance: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); padding: 5px 8px; font-size: .72rem; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.contact-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.contact-actions button.fav-active { color: var(--warn); border-color: var(--warn); }
+.contact-actions button.remove-btn:hover { border-color: var(--bad); color: var(--bad); }
+.contact-type-badge { display: inline-block; padding: 2px 6px; border-radius: 6px; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; background: var(--accent-soft); color: var(--accent); }
+.contacts-empty { padding: 24px; text-align: center; color: var(--muted); font-size: .88rem; }
+@media (max-width: 650px) { .contact-row { flex-wrap: wrap; } .contact-actions { width: 100%; justify-content: flex-end; } }

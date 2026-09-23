@@ -11,9 +11,9 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <img class="nomad-logo" src="assets/project_nomad_logo.webp" alt="Project N.O.M.A.D.">
         <div><div class="eyebrow">openHop plugin</div><h1>NOMAD Bridge</h1></div>
-          <span class="version">v0.1.2</span>
+          <span class="version">v1.0.0</span>
       </div>
       <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Loading</span>
     </header>
@@ -25,15 +25,24 @@
         <div>
           <div class="eyebrow">Plugin configuration</div>
           <h2>Companion to NOMAD bridge settings</h2>
-          <p class="muted">Configure companion server connectivity, NOMAD target details, and payload limits from the openHop dashboard.</p>
+          <p class="muted">Configure your Companion connection and NOMAD AI chat.</p>
         </div>
         <div class="quick-facts">
-          <div><span>Companion endpoint</span><strong id="overview-meshcore">127.0.0.1:5001</strong></div>
-          <div><span>NOMAD endpoint</span><strong id="overview-nomad">http://127.0.0.1:8080</strong></div>
+          <div><span>Companion endpoint</span><strong id="overview-meshcore">127.0.0.1:5050</strong></div>
+          <div><span>NOMAD endpoint</span><strong id="overview-nomad">http://nomad_admin:8080</strong></div>
           <div><span>Model</span><strong id="overview-model">qwen2.5:3b-instruct</strong></div>
         </div>
       </section>
 
+      <section class="card settings-section" aria-labelledby="advert-heading">
+        <h3 id="advert-heading">Send an advert</h3>
+        <p class="muted">Let nearby devices discover your Companion. Choose zero-hop for direct neighbors or flood to forward the advert through the mesh.</p>
+        <div class="settings-actions">
+          <button id="advert-zero" class="button ghost" type="button" disabled>Zero-hop advert</button>
+          <button id="advert-flood" class="button ghost" type="button" disabled>Flood advert</button>
+        </div>
+        <p id="advert-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
+      </section>
       <form id="settings-form">
         <div class="page-heading">
           <div>
@@ -47,7 +56,15 @@
           </div>
         </div>
 
-        <section class="card settings-section">
+        <div class="settings-tabs" role="tablist" aria-label="Settings categories">
+          <button type="button" role="tab" id="tab-connectivity" aria-controls="panel-connectivity" aria-selected="true" tabindex="0">Connectivity</button>
+          <button type="button" role="tab" id="tab-behavior" aria-controls="panel-behavior" aria-selected="false" tabindex="-1">Behavior &amp; access</button>
+          <button type="button" role="tab" id="tab-replies" aria-controls="panel-replies" aria-selected="false" tabindex="-1">Replies</button>
+          <button type="button" role="tab" id="tab-companion" aria-controls="panel-companion" aria-selected="false" tabindex="-1">Companion device</button>
+          <button type="button" role="tab" id="tab-contacts" aria-controls="panel-contacts" aria-selected="false" tabindex="-1">Contacts</button>
+        </div>
+
+        <section id="panel-connectivity" role="tabpanel" aria-labelledby="tab-connectivity" class="card settings-section">
           <div class="settings-section-heading">
             <div>
               <h3>Connectivity</h3>
@@ -56,29 +73,16 @@
             <span class="section-number">01</span>
           </div>
           <div class="form-grid three">
-            <label>Companion host
-              <input id="meshcore_host" type="text" autocomplete="off" placeholder="127.0.0.1">
-            </label>
-            <label>Companion port
-              <input id="meshcore_port" type="number" min="1" max="65535">
-            </label>
-            <label>NOMAD URL
-              <input id="nomad_url" type="url" placeholder="http://127.0.0.1:8080">
-            </label>
-            <label>NOMAD model
-              <input id="nomad_model" type="text" autocomplete="off" placeholder="qwen2.5:3b-instruct">
-            </label>
-            <label class="span-two">Collection (optional)
-              <input id="nomad_collection" type="text" autocomplete="off" placeholder="Leave blank for default">
-              <small>Blank stores null and uses the NOMAD server default collection.</small>
-            </label>
-            <label>Request timeout (seconds)
-              <input id="nomad_timeout_seconds" type="number" min="1" max="600">
-            </label>
+            <div class="field"><button id="label-meshcore_host" type="button" class="help-button" data-field="meshcore_host" aria-expanded="false" aria-controls="help-meshcore_host">Companion host <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-meshcore_host" aria-describedby="help-meshcore_host" id="meshcore_host" type="text" autocomplete="off" placeholder="127.0.0.1"><p class="field-help" id="help-meshcore_host" hidden>Default: 127.0.0.1. Address of the Repeater Companion TCP frame server, not NOMAD. Loopback works when the plugin and Companion run in the same host/container network namespace. For a separate host, use its reachable address and secure the connection on a trusted network.</p></div>
+            <div class="field"><button id="label-meshcore_port" type="button" class="help-button" data-field="meshcore_port" aria-expanded="false" aria-controls="help-meshcore_port">Companion port <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-meshcore_port" aria-describedby="help-meshcore_port" id="meshcore_port" type="number" min="1" max="65535"><p class="field-help" id="help-meshcore_port" hidden>Default: 5050. TCP port of your dedicated Companion identity in Repeater. Match the port configured there; another identity may use a different port. This is not the NOMAD HTTP port. Existing explicitly configured ports are preserved.</p></div>
+            <div class="field"><button id="label-nomad_url" type="button" class="help-button" data-field="nomad_url" aria-expanded="false" aria-controls="help-nomad_url">NOMAD URL <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-nomad_url" aria-describedby="help-nomad_url" id="nomad_url" type="url" placeholder="http://nomad_admin:8080"><p class="field-help" id="help-nomad_url" hidden>Default: http://nomad_admin:8080. Base HTTP(S) address of Project NOMAD, not a direct Ollama endpoint. The Docker name works only when Repeater and NOMAD share a user-defined network; preserve that network in Compose across recreation. For remote or standalone installs use a reachable hostname/IP. Loopback means the plugin’s own network namespace. Use the final URL: redirects and base paths are not supported.</p></div>
+            <div class="field"><button id="label-nomad_model" type="button" class="help-button" data-field="nomad_model" aria-expanded="false" aria-controls="help-nomad_model">NOMAD model <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-nomad_model" aria-describedby="help-nomad_model" id="nomad_model" type="text" autocomplete="off" placeholder="qwen2.5:3b-instruct"><p class="field-help" id="help-nomad_model" hidden>Default: qwen2.5:3b-instruct. Exact model identifier NOMAD should use, including its tag. Choose a model already available to NOMAD; changing this field does not download one. Smaller models generally answer faster on limited hardware.</p></div>
+            <div class="field span-two"><button id="label-nomad_collection" type="button" class="help-button" data-field="nomad_collection" aria-expanded="false" aria-controls="help-nomad_collection">Collection (optional) <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-nomad_collection" aria-describedby="help-nomad_collection" id="nomad_collection" type="text" autocomplete="off" placeholder="Leave blank for default"><p class="field-help" id="help-nomad_collection" hidden>Optional NOMAD collection identifier sent with chat requests, for retrieval from a collection configured in NOMAD. Leave blank to omit it and let NOMAD apply its default behavior. This does not create or download a collection.</p></div>
+            <div class="field"><button id="label-nomad_timeout_seconds" type="button" class="help-button" data-field="nomad_timeout_seconds" aria-expanded="false" aria-controls="help-nomad_timeout_seconds">Request timeout (seconds) <span class="help-indicator" aria-hidden="true">(i)</span></button><input aria-labelledby="label-nomad_timeout_seconds" aria-describedby="help-nomad_timeout_seconds" id="nomad_timeout_seconds" type="number" min="1" max="600"><p class="field-help" id="help-nomad_timeout_seconds" hidden>Default: 120 seconds. Total deadline for each NOMAD HTTP request, including DNS, connection/TLS, response headers and answer body. Slow models may need longer. This does not include waiting for a bridge concurrency slot or transmitting radio replies. A timeout returns an unavailable reply; it does not guarantee NOMAD has stopped generating.</p></div>
           </div>
         </section>
 
-        <section class="card settings-section">
+        <section id="panel-behavior" role="tabpanel" aria-labelledby="tab-behavior" class="card settings-section" hidden>
           <div class="settings-section-heading">
             <div>
               <h3>Bridge behavior</h3>
@@ -87,36 +91,37 @@
             <span class="section-number">02</span>
           </div>
           <div class="toggle-grid">
-            <label class="check-card"><input id="one_shot" type="checkbox"><span>One-shot mode</span></label>
-            <label class="check-card"><input id="radio_prompt_enabled" type="checkbox"><span>Radio prompt enabled</span></label>
+            <div class="field "><div class="check-card"><input id="one_shot" aria-labelledby="label-one_shot" aria-describedby="help-one_shot" type="checkbox"><button id="label-one_shot" type="button" class="help-button" data-field="one_shot" aria-expanded="false" aria-controls="help-one_shot">One-shot mode <span class="help-indicator" aria-hidden="true">(i)</span></button></div><p class="field-help" id="help-one_shot" hidden>On: each question is stateless. Off (default): keep private per-sender conversation memory in RAM, up to 10 question/answer pairs and 16 KiB, for 30 minutes after the last successful answer. At most 64 senders; oldest conversations are evicted. /new or /reset clears your memory. Restart clears all memory. No NOMAD server sessions are created.</p></div>
+            <div class="field "><div class="check-card"><input id="radio_prompt_enabled" aria-labelledby="label-radio_prompt_enabled" aria-describedby="help-radio_prompt_enabled" type="checkbox"><button id="label-radio_prompt_enabled" type="button" class="help-button" data-field="radio_prompt_enabled" aria-expanded="false" aria-controls="help-radio_prompt_enabled">Radio prompt enabled <span class="help-indicator" aria-hidden="true">(i)</span></button></div><p class="field-help" id="help-radio_prompt_enabled" hidden>Default: on. Wraps the incoming question in the radio prompt template to request concise plain-text answers. Off sends the question without that wrapper; payload limits still apply.</p></div>
           </div>
           <div class="form-grid three nested">
-            <label>Max concurrent requests
-              <input id="max_concurrent_requests" type="number" min="1" max="32">
-            </label>
-            <label>Busy wait (seconds)
-              <input id="busy_wait_seconds" type="number" min="0" max="120" step="1">
-            </label>
-            <label>Duplicate TTL (seconds)
-              <input id="duplicate_ttl_seconds" type="number" min="0" max="86400" step="1">
-            </label>
-            <label>Log level
-              <select id="log_level">
+<div class="field "><button id="label-max_pending_requests" type="button" class="help-button" data-field="max_pending_requests" aria-expanded="false" aria-controls="help-max_pending_requests">Max pending requests <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_pending_requests" aria-labelledby="label-max_pending_requests" aria-describedby="help-max_pending_requests" type="number" min="1" step="1" required><p class="field-help" id="help-max_pending_requests" hidden>Default: 1. Caps all accepted requests, including active handlers, requests waiting for a slot, and replies still being sent. Must be at least max concurrent requests. New messages above this limit are silently dropped.</p></div>
+<div class="field "><button id="label-max_requests_per_sender" type="button" class="help-button" data-field="max_requests_per_sender" aria-expanded="false" aria-controls="help-max_requests_per_sender">Requests per sender <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_requests_per_sender" aria-labelledby="label-max_requests_per_sender" aria-describedby="help-max_requests_per_sender" type="number" min="1" step="1" required><p class="field-help" id="help-max_requests_per_sender" hidden>Default: 2. Maximum accepted requests from one allowed sender within the rate limit window. Must not exceed the global limit. Excess requests are silently dropped.</p></div>
+<div class="field "><button id="label-max_requests_global" type="button" class="help-button" data-field="max_requests_global" aria-expanded="false" aria-controls="help-max_requests_global">Requests globally <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_requests_global" aria-labelledby="label-max_requests_global" aria-describedby="help-max_requests_global" type="number" min="1" step="1" required><p class="field-help" id="help-max_requests_global" hidden>Default: 4. Maximum accepted requests across all senders within the rate limit window. Works together with the per-sender cap; excess requests are silently dropped.</p></div>
+<div class="field "><button id="label-rate_limit_window_seconds" type="button" class="help-button" data-field="rate_limit_window_seconds" aria-expanded="false" aria-controls="help-rate_limit_window_seconds">Rate limit window (seconds) <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="rate_limit_window_seconds" aria-labelledby="label-rate_limit_window_seconds" aria-describedby="help-rate_limit_window_seconds" type="number" min="0.1" step="any" required><p class="field-help" id="help-rate_limit_window_seconds" hidden>Default: 60 seconds. Rolling window used by both request rate limits. A longer window reduces how often senders can submit requests. Must be greater than zero.</p></div>
+<div class="field span-three"><button id="label-allowed_sender_prefixes" type="button" class="help-button" data-field="allowed_sender_prefixes" aria-expanded="false" aria-controls="help-allowed_sender_prefixes">Allowed sender prefixes <span class="help-indicator" aria-hidden="true">(i)</span></button><textarea id="allowed_sender_prefixes" aria-labelledby="label-allowed_sender_prefixes" aria-describedby="help-allowed_sender_prefixes" rows="2" placeholder="One 12-character hexadecimal prefix per line"></textarea><p class="field-help" id="help-allowed_sender_prefixes" hidden>Leave this list empty to allow everyone. Add one or more public keys to enable the whitelist—only listed senders are allowed. Enter only the first 12 hexadecimal characters of each sender's public key, not the full key. One prefix per line or comma-separated; blank entries are ignored. Only senders who can DM this Companion can use the bridge; rate limits still apply.</p></div>
+
+            <div class="field "><button id="label-max_concurrent_requests" type="button" class="help-button" data-field="max_concurrent_requests" aria-expanded="false" aria-controls="help-max_concurrent_requests">Max concurrent requests <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_concurrent_requests" aria-labelledby="label-max_concurrent_requests" aria-describedby="help-max_concurrent_requests" type="number" min="1" max="32">
+            <p class="field-help" id="help-max_concurrent_requests" hidden>Default: 1. Maximum simultaneous request handlers. A slot remains occupied while NOMAD answers and the radio reply is sent, not just during HTTP inference. Must not exceed max pending requests.</p></div>
+            <div class="field "><button id="label-busy_wait_seconds" type="button" class="help-button" data-field="busy_wait_seconds" aria-expanded="false" aria-controls="help-busy_wait_seconds">Busy wait (seconds) <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="busy_wait_seconds" aria-labelledby="label-busy_wait_seconds" aria-describedby="help-busy_wait_seconds" type="number" min="0" max="120" step="1">
+            <p class="field-help" id="help-busy_wait_seconds" hidden>Default: 5 seconds. How long an accepted request waits for a concurrency slot before returning a busy reply. Zero returns busy immediately when all slots are occupied; this is not the NOMAD HTTP timeout.</p></div>
+            <div class="field "><button id="label-duplicate_ttl_seconds" type="button" class="help-button" data-field="duplicate_ttl_seconds" aria-expanded="false" aria-controls="help-duplicate_ttl_seconds">Duplicate TTL (seconds) <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="duplicate_ttl_seconds" aria-labelledby="label-duplicate_ttl_seconds" aria-describedby="help-duplicate_ttl_seconds" type="number" min="60" max="86400" step="1">
+            <p class="field-help" id="help-duplicate_ttl_seconds" hidden>Default: 600 seconds; minimum: 60. How long recently seen message identifiers are remembered to suppress retransmitted duplicates. This does not block every identical question indefinitely.</p></div>
+            <div class="field "><button id="label-log_level" type="button" class="help-button" data-field="log_level" aria-expanded="false" aria-controls="help-log_level">Log level <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="log_level" aria-labelledby="label-log_level" aria-describedby="help-log_level">
                 <option value="DEBUG">DEBUG</option>
                 <option value="INFO">INFO</option>
                 <option value="WARNING">WARNING</option>
                 <option value="ERROR">ERROR</option>
                 <option value="CRITICAL">CRITICAL</option>
               </select>
-            </label>
-            <label class="span-three">Radio prompt template
-              <textarea id="radio_prompt_template" rows="8" spellcheck="false" placeholder="Template must include {question}"></textarea>
+            <p class="field-help" id="help-log_level" hidden>Default: INFO. Controls plugin log verbosity, from detailed DEBUG diagnostics to CRITICAL only. DEBUG can expose operational metadata; use it temporarily when troubleshooting.</p></div>
+            <div class="field span-three"><button id="label-radio_prompt_template" type="button" class="help-button" data-field="radio_prompt_template" aria-expanded="false" aria-controls="help-radio_prompt_template">Radio prompt template <span class="help-indicator" aria-hidden="true">(i)</span></button><textarea id="radio_prompt_template" aria-labelledby="label-radio_prompt_template" aria-describedby="help-radio_prompt_template" rows="8" spellcheck="false" placeholder="Template must include {question}"></textarea>
               <small>Required. Must include <code>{question}</code> so the incoming user message can be injected.</small>
-            </label>
+            <p class="field-help" id="help-radio_prompt_template" hidden>Default: concise radio-answer instructions. Use {question} to insert the received question. Only that substitution is allowed; use double braces for literal braces. The template must remain valid even when the radio prompt is disabled.</p></div>
           </div>
         </section>
 
-        <section class="card settings-section">
+        <section id="panel-replies" role="tabpanel" aria-labelledby="tab-replies" class="card settings-section" hidden>
           <div class="settings-section-heading">
             <div>
               <h3>Radio payload limits</h3>
@@ -125,16 +130,59 @@
             <span class="section-number">03</span>
           </div>
           <div class="form-grid three">
-            <label>Max reply chunks
-              <input id="max_reply_chunks" type="number" min="1" max="32">
-            </label>
-            <label>Max chunk bytes
-              <input id="max_chunk_bytes" type="number" min="64" max="1024">
-            </label>
-            <label>Max prompt bytes
-              <input id="max_prompt_bytes" type="number" min="128" max="8192">
-            </label>
+            <div class="field "><button id="label-reply_chunk_delay_seconds" type="button" class="help-button" data-field="reply_chunk_delay_seconds" aria-expanded="false" aria-controls="help-reply_chunk_delay_seconds">Reply delay (seconds) <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="reply_chunk_delay_seconds" aria-labelledby="label-reply_chunk_delay_seconds" aria-describedby="help-reply_chunk_delay_seconds" type="number" min="0" max="60" step="any" required><p class="field-help" id="help-reply_chunk_delay_seconds" hidden>Default: 2 seconds; range: 0–60. Global minimum spacing between outgoing sends, shared by concurrent answers and error replies. Zero disables pacing. Companion acceptance is not confirmation of RF delivery.</p></div>
+            <div class="field "><button id="label-max_reply_chunks" type="button" class="help-button" data-field="max_reply_chunks" aria-expanded="false" aria-controls="help-max_reply_chunks">Max reply chunks <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_reply_chunks" aria-labelledby="label-max_reply_chunks" aria-describedby="help-max_reply_chunks" type="number" min="1" max="32">
+            <p class="field-help" id="help-max_reply_chunks" hidden>Default: 4. Maximum chunks in one answer. Longer answers are truncated to this budget. More chunks use more airtime; failed or unconfirmed Companion acceptance stops the remaining answer.</p></div>
+            <div class="field "><button id="label-max_chunk_bytes" type="button" class="help-button" data-field="max_chunk_bytes" aria-expanded="false" aria-controls="help-max_chunk_bytes">Max chunk bytes <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_chunk_bytes" aria-labelledby="label-max_chunk_bytes" aria-describedby="help-max_chunk_bytes" type="number" min="40" max="1024">
+            <p class="field-help" id="help-max_chunk_bytes" hidden>Default: 80 UTF-8 bytes per chunk; minimum: 40. Includes chunk numbering. Non-ASCII characters may use multiple bytes. Smaller chunks suit constrained links; a larger value does not increase the radio protocol capacity.</p></div>
+            <div class="field "><button id="label-max_prompt_bytes" type="button" class="help-button" data-field="max_prompt_bytes" aria-expanded="false" aria-controls="help-max_prompt_bytes">Max prompt bytes <span class="help-indicator" aria-hidden="true">(i)</span></button><input id="max_prompt_bytes" aria-labelledby="label-max_prompt_bytes" aria-describedby="help-max_prompt_bytes" type="number" min="128" max="8192">
+            <p class="field-help" id="help-max_prompt_bytes" hidden>Default: 1000 UTF-8 bytes. Maximum incoming question size before the radio prompt template is added. Oversized questions receive a short error instead of being sent to NOMAD.</p></div>
           </div>
+        </section>
+        <section id="panel-companion" role="tabpanel" aria-labelledby="tab-companion" class="card settings-section" hidden>
+          <h3>Companion device settings</h3>
+          <p class="muted">Read or apply settings on the running Companion connection. This is separate from Save and restart; unsaved connection fields above are not used. Changes affect the Companion identity, including other apps using it.</p>
+          <div class="form-grid three">
+            <div class="field"><button id="label-companion-auto-add" type="button" class="help-button" data-field="companion-auto-add" aria-expanded="false" aria-controls="help-companion-auto-add">Auto Add <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="companion-auto-add" aria-labelledby="label-companion-auto-add" aria-describedby="help-companion-auto-add" disabled><option value="">Read current settings first</option><option value="all">All</option><option value="none">None</option></select><p class="field-help" id="help-companion-auto-add" hidden>All automatically adds all contact types. None disables automatic contact addition, not direct messages or bridge access. Existing Selected mode is kept until you explicitly choose All or None. None clears the selected type bits; All retains them for other apps. No existing contacts are deleted.</p></div>
+            <div class="field"><button id="label-companion-overwrite" type="button" class="help-button" data-field="companion-overwrite" aria-expanded="false" aria-controls="help-companion-overwrite">Overwrite Oldest <span class="help-indicator" aria-hidden="true">(i)</span></button><label class="check-card"><input id="companion-overwrite" type="checkbox" aria-labelledby="label-companion-overwrite" aria-describedby="help-companion-overwrite" disabled><span>Allow replacement</span></label><p class="field-help" id="help-companion-overwrite" hidden>Allow the Companion to replace its oldest eligible contact when its contact table is full. This changes the overwrite flag only; other flags and any maximum-hop limit are preserved.</p></div>
+            <div class="field"><button id="label-companion-path-bytes" type="button" class="help-button" data-field="companion-path-bytes" aria-expanded="false" aria-controls="help-companion-path-bytes">Path hash bytes <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="companion-path-bytes" aria-labelledby="label-companion-path-bytes" aria-describedby="help-companion-path-bytes" disabled><option value="">Read current settings first</option><option value="1">1 byte</option><option value="2">2 bytes</option><option value="3">3 bytes</option></select><p class="field-help" id="help-companion-path-bytes" hidden>Companion path hash width: 1, 2 or 3 bytes per hop (protocol modes 0, 1 or 2). This is not message chunk size. Wider hashes reduce collisions but use more path space. Requires a Companion that reports and supports this mode.</p></div>
+          </div>
+          <div class="settings-actions nested">
+            <button id="companion-read" class="button ghost" type="button" disabled>Read from Companion</button>
+            <button id="companion-apply" class="button primary" type="button" disabled>Apply to Companion</button>
+          </div>
+          <p id="companion-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
+          <p class="muted">Apply reads current preferences, preserves unrelated values, then verifies by reading back. Multi-command changes are not atomic. If partial or unknown, read again before deciding what to change; no automatic retry or rollback.</p>
+        </section>
+        <section id="panel-contacts" role="tabpanel" aria-labelledby="tab-contacts" class="card settings-section" hidden>
+          <div class="settings-section-heading">
+            <div>
+              <h3>Address book</h3>
+              <p>View, manage, and favorite contacts on the connected Companion. Removing stale contacts frees slots for new ones.</p>
+            </div>
+            <span class="section-number">05</span>
+          </div>
+          <div class="settings-actions nested">
+            <button id="contacts-refresh" class="button ghost" type="button" disabled>Refresh contacts</button>
+          </div>
+          <div class="contacts-controls">
+            <input id="contacts-search" type="text" placeholder="Search by name or key…" aria-label="Search contacts">
+            <select id="contacts-filter" aria-label="Filter contacts">
+              <option value="all">All contacts</option>
+              <option value="favorites">Favorites only</option>
+            </select>
+            <select id="contacts-type-filter" aria-label="Filter by type">
+              <option value="all">All types</option>
+              <option value="0">Unknown</option>
+              <option value="1">Companion</option>
+              <option value="2">Repeater</option>
+              <option value="3">Room Server</option>
+              <option value="4">Sensor</option>
+            </select>
+          </div>
+          <p id="contacts-status" class="muted" role="status" aria-live="polite">Checking running plugin…</p>
+          <div id="contacts-list" class="contacts-list"></div>
+          <p id="contacts-count" class="muted"></p>
         </section>
       </form>
     </main>

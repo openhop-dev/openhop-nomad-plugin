@@ -17,10 +17,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tomllib
 import urllib.error
 import urllib.request
 import zipfile
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 test/development environments
+    import tomli as tomllib
 
 REPOSITORY = "openhop-dev/openhop-nomad-plugin"
 CATALOGUE = "openhop-dev/openhop-plugin-catalogue"
