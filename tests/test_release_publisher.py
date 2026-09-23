@@ -14,6 +14,31 @@ def module():
     return m
 
 
+def test_empty_published_release_uploads_both_assets_then_checks_exact_bytes():
+    m = module()
+    assets = {"wheel.whl": b"wheel", "bundle.zip": b"bundle"}
+    states = iter([{}, assets])
+    calls = []
+    m.publish(lambda: next(states), lambda: pytest.fail("must not create release"),
+              assets, lambda _: calls.append("verified"),
+              upload=lambda: calls.append("uploaded"))
+    assert calls == ["uploaded", "verified"]
+
+
+def test_empty_published_release_readback_mismatch_fails():
+    m = module()
+    states = iter([{}, {"wheel.whl": b"wrong", "bundle.zip": b"bundle"}])
+    with pytest.raises(ValueError, match="partial/differing"):
+        m.publish(lambda: next(states), lambda: pytest.fail("must not create release"),
+                  {"wheel.whl": b"wheel", "bundle.zip": b"bundle"},
+                  lambda _: pytest.fail("must not verify"), upload=lambda: None)
+
+
+def test_empty_release_requires_explicit_upload_callback():
+    with pytest.raises(ValueError, match="upload callback"):
+        module().publish(lambda: {}, lambda: None, {"wheel.whl": b"wheel"}, lambda _: None)
+
+
 def test_existing_release_compares_bytes_without_upload():
     m = module()
     assets = {"wheel.whl": b"wheel", "bundle.zip": b"bundle"}

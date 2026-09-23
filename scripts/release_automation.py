@@ -65,6 +65,10 @@ def release_state(release, tag):
     require(release["tag_name"] == tag and not release["draft"] and not release["prerelease"],
             "release must be final")
     actual = [a["name"] for a in release["assets"]]
+    # A release published through GitHub's UI can exist before the wheel job.
+    # Only the wholly empty case is recoverable; partial assets stay closed.
+    if not actual:
+        return "build"
     require(sorted(actual) == sorted(names), "partial/unexpected assets: deliberate recovery required")
     return "verify"
 

@@ -139,10 +139,17 @@ def test_existing_assets_are_never_rebuilt_or_overwritten():
     assert m.release_state(None, "v0.1.2") == "build"
     assert m.release_state({"tag_name": "v0.1.2", "draft": False, "prerelease": False,
                             "assets": [{"name": n} for n in names]}, "v0.1.2") == "verify"
-    for assets in ([], [{"name": names[0]}], [{"name": "unexpected"}]):
-        with pytest.raises(ValueError):
+    assert m.release_state({"tag_name": "v0.1.2", "draft": False,
+                            "prerelease": False, "assets": []}, "v0.1.2") == "build"
+    for assets in ([{"name": names[0]}], [{"name": "unexpected"}]):
+        with pytest.raises(ValueError, match="partial/unexpected assets"):
             m.release_state({"tag_name": "v0.1.2", "draft": False, "prerelease": False,
                              "assets": assets}, "v0.1.2")
+    for release in ({"tag_name": "v0.1.2", "draft": True, "prerelease": False, "assets": []},
+                    {"tag_name": "v0.1.2", "draft": False, "prerelease": True, "assets": []},
+                    {"tag_name": "v0.1.3", "draft": False, "prerelease": False, "assets": []}):
+        with pytest.raises(ValueError, match="release must be final"):
+            m.release_state(release, "v0.1.2")
 
 
 def test_bundle_must_contain_identical_wheel():

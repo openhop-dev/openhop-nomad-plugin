@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Publish absent releases only. Existing versioned bytes are never replaced."""
+"""Publish absent assets only. Existing versioned bytes are never replaced."""
 import argparse
 from pathlib import Path
 import subprocess
 import tempfile
 
 
-def publish(inspect, create, expected, verified):
+def publish(inspect, create, expected, verified, *, upload=None):
     before = inspect()
     if before is None:
         create()
+        before = inspect()
+    elif before == {}:
+        if upload is None:
+            raise ValueError("empty release requires upload callback")
+        upload()
         before = inspect()
     if before != expected:
         raise ValueError("partial/differing release assets; explicit recovery required; never overwrite")
@@ -41,8 +46,10 @@ def main():
     def inspect():
         check_tag()
         release = optional(api.call, f"/repos/{REPOSITORY}/releases/tags/{args.tag}")
-        if release_state(release, args.tag) == "build":
+        if release is None:
             return None
+        if release_state(release, args.tag) == "build":
+            return {}
         with tempfile.TemporaryDirectory() as temp:
             cmd = ["gh", "release", "download", args.tag, "--repo", REPOSITORY, "--dir", temp]
             result = subprocess.run(cmd, capture_output=True)
@@ -55,7 +62,15 @@ def main():
             "--verify-tag", "--title", args.tag, "--notes", "NOMAD plugin wheel and matching ZIP bundle.",
             "--latest=false", *(str(args.assets / name) for name in names)], capture_output=True)
         require(result.returncode == 0, "release create failed; inspect partial state before retry")
-    publish(inspect, create, expected, lambda _: check_tag())
+    def upload():
+        # A UI-published release is valid only when still final and asset-free.
+        check_tag()
+        release = api.call(f"/repos/{REPOSITORY}/releases/tags/{args.tag}")
+        require(release_state(release, args.tag) == "build", "release changed before upload")
+        result = subprocess.run(["gh", "release", "upload", args.tag, "--repo", REPOSITORY,
+            *(str(args.assets / name) for name in names)], capture_output=True)
+        require(result.returncode == 0, "release upload failed; inspect partial state before retry")
+    publish(inspect, create, expected, lambda _: check_tag(), upload=upload)
     print("Verified published release assets match exact tested build bytes")
 
 
